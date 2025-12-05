@@ -1,0 +1,13 @@
+webserv
+obj/
+
+*.o
+*.a
+*.so
+*.dylib
+*.log
+*~
+
+.DS_Store
+.vscode/
+.idea/
