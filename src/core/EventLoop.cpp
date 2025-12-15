@@ -40,62 +40,62 @@ void EventLoop::run(CoreServer& server)
 			break;
 		}
 
-		if(ret==0)
+		if(ret>0)
 		{
-			continue;
-		}
-
-		for(std::size_t i=0;i<_pollFds.size();++i)
-		{
-			struct pollfd& fdInfo=_pollFds[i];
-
-			if(fdInfo.fd<0)
+			for(std::size_t i=0;i<_pollFds.size();++i)
 			{
-				continue;
-			}
+				struct pollfd& fdInfo=_pollFds[i];
 
-			if(fdInfo.revents==0)
-			{
-				continue;
-			}
-
-			int fd=fdInfo.fd;
-
-			if(server.isListenFd(fd))
-			{
-				if(fdInfo.revents&POLLIN)
+				if(fdInfo.fd<0)
 				{
-					server.handleNewConnection(*this,fd);
-				}
-				if(fdInfo.revents&(POLLERR|POLLHUP|POLLNVAL))
-				{
-					Logger::error("Listen socket error");
-					return;
-				}
-			}
-			else
-			{
-				if(fdInfo.revents&(POLLERR|POLLHUP|POLLNVAL))
-				{
-					server.closeClient(*this,fd);
 					continue;
 				}
 
-				if(fdInfo.revents&POLLIN)
+				if(fdInfo.revents==0)
 				{
-					server.handleClientRead(*this,fd);
+					continue;
 				}
 
-				if(fdInfo.revents&POLLOUT)
+				int fd=fdInfo.fd;
+
+				if(server.isListenFd(fd))
 				{
-					server.handleClientWrite(*this,fd);
+					if(fdInfo.revents&POLLIN)
+					{
+						server.handleNewConnection(*this,fd);
+					}
+					if(fdInfo.revents&(POLLERR|POLLHUP|POLLNVAL))
+					{
+						Logger::error("Listen socket error");
+						return;
+					}
 				}
+				else
+				{
+					if(fdInfo.revents&(POLLERR|POLLHUP|POLLNVAL))
+					{
+						server.closeClient(*this,fd);
+						continue;
+					}
+
+					if(fdInfo.revents&POLLIN)
+					{
+						server.handleClientRead(*this,fd);
+					}
+
+					if(fdInfo.revents&POLLOUT)
+					{
+						server.handleClientWrite(*this,fd);
+					}
+				}
+
+				fdInfo.revents=0;
 			}
 
-			fdInfo.revents=0;
+			compact();
 		}
 
-		compact();
+		server.checkTimeouts(*this);
 	}
 }
 

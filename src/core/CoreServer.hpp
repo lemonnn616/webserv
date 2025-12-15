@@ -24,9 +24,10 @@ public:
 	void handleClientWrite(EventLoop& loop,int fd);
 	void closeClient(EventLoop& loop,int fd);
 
-private:
-	friend class EventLoop;
+	// вызывать только из EventLoop
+	void checkTimeouts(EventLoop& loop);
 
+private:
 	std::string _configPath;
 	std::vector<int> _listenFds;
 	std::vector<unsigned short> _ports;
@@ -39,5 +40,4 @@ private:
 
 	bool initListenSockets();
 	int createListenSocket(unsigned short port);
-	void checkTimeouts(EventLoop& loop);
 };

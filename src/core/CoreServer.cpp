@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
+#include <vector>
 
 CoreServer::CoreServer(const std::string& configPath)
 	:_configPath(configPath)
@@ -16,9 +17,9 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_ports()
 	,_listenFdToServerIndex()
 	,_clients()
-	,_readTimeout( std::chrono::seconds(30) )
-	,_writeTimeout( std::chrono::seconds(30) )
-	,_idleTimeout( std::chrono::seconds(120) )
+	,_readTimeout(std::chrono::seconds(30))
+	,_writeTimeout(std::chrono::seconds(30))
+	,_idleTimeout(std::chrono::seconds(120))
 {
 	_ports.push_back(8080);
 }
@@ -227,9 +228,8 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 
 	if(!client.inBuffer.empty())
 	{
-		client.writeQueue.push_back(client.inBuffer);
+		client.outBuffer.append(client.inBuffer);
 		client.inBuffer.clear();
-		client.writeOffset=0;
 		client.state=ConnectionState::WRITING;
 		loop.setWriteEnabled(fd,true);
 	}
@@ -244,25 +244,13 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 	}
 	Client& client=it->second;
 
-	while(!client.writeQueue.empty())
+	while(!client.outBuffer.empty())
 	{
-		std::string& chunk=client.writeQueue.front();
-
-		if(client.writeOffset>=chunk.size())
-		{
-			client.writeQueue.pop_front();
-			client.writeOffset=0;
-			continue;
-		}
-
-		const char* data=chunk.data()+client.writeOffset;
-		std::size_t remaining=chunk.size()-client.writeOffset;
-
-		ssize_t n=::send(fd,data,remaining,0);
+		ssize_t n=::send(fd,client.outBuffer.data(),client.outBuffer.size(),0);
 		if(n>0)
 		{
 			client.lastActivity=std::chrono::steady_clock::now();
-			client.writeOffset+=static_cast<std::size_t>(n);
+			client.outBuffer.erase(0,static_cast<std::size_t>(n));
 		}
 		else if(n==0)
 		{
@@ -280,9 +268,8 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 		}
 	}
 
-	if(client.writeQueue.empty())
+	if(client.outBuffer.empty())
 	{
-		client.writeOffset=0;
 		client.state=ConnectionState::READING;
 		loop.setWriteEnabled(fd,false);
 	}
