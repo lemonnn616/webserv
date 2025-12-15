@@ -1,6 +1,7 @@
 #include "core/CoreServer.hpp"
 #include "core/EventLoop.hpp"
 #include "core/Logger.hpp"
+#include "http/IHttpHandler.hpp"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -14,14 +15,18 @@
 CoreServer::CoreServer(const std::string& configPath)
 	:_configPath(configPath)
 	,_listenFds()
-	,_ports()
+	,_listenConfigs()
 	,_listenFdToServerIndex()
 	,_clients()
 	,_readTimeout(std::chrono::seconds(30))
 	,_writeTimeout(std::chrono::seconds(30))
 	,_idleTimeout(std::chrono::seconds(120))
+	,_httpHandler(nullptr)
 {
-	_ports.push_back(8080);
+	ListenConfig cfg;
+	cfg.port=8080;
+	cfg.serverIndex=0;
+	_listenConfigs.push_back(cfg);
 }
 
 int CoreServer::run()
@@ -38,15 +43,25 @@ int CoreServer::run()
 	return 0;
 }
 
+void CoreServer::setHttpHandler(IHttpHandler* handler)
+{
+	_httpHandler=handler;
+}
+
+void CoreServer::setListenConfigs(const std::vector<ListenConfig>& configs)
+{
+	_listenConfigs=configs;
+}
+
 bool CoreServer::initListenSockets()
 {
-	for(std::size_t i=0;i<_ports.size();++i)
+	for(std::size_t i=0;i<_listenConfigs.size();++i)
 	{
-		unsigned short port=_ports[i];
-		int fd=createListenSocket(port);
+		const ListenConfig& cfg=_listenConfigs[i];
+		int fd=createListenSocket(cfg.port);
 		if(fd<0)
 		{
-			Logger::error("Failed to create listen socket on port "+std::to_string(port));
+			Logger::error("Failed to create listen socket on port "+std::to_string(cfg.port));
 			for(std::size_t j=0;j<_listenFds.size();++j)
 			{
 				::close(_listenFds[j]);
@@ -56,8 +71,8 @@ bool CoreServer::initListenSockets()
 			return false;
 		}
 		_listenFds.push_back(fd);
-		_listenFdToServerIndex[fd]=i;
-		Logger::info("Listening on port "+std::to_string(port));
+		_listenFdToServerIndex[fd]=cfg.serverIndex;
+		Logger::info("Listening on port "+std::to_string(cfg.port));
 	}
 	return true;
 }
@@ -228,10 +243,35 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 
 	if(!client.inBuffer.empty())
 	{
-		client.outBuffer.append(client.inBuffer);
-		client.inBuffer.clear();
-		client.state=ConnectionState::WRITING;
-		loop.setWriteEnabled(fd,true);
+		if(_httpHandler!=nullptr)
+		{
+			_httpHandler->onDataReceived(
+				fd,
+				client.inBuffer,
+				client.outBuffer,
+				client.state,
+				client.serverConfigIndex,
+				client.sessionId
+			);
+
+			if(client.state==ConnectionState::CLOSING)
+			{
+				closeClient(loop,fd);
+				return;
+			}
+
+			if(client.state==ConnectionState::WRITING&& !client.outBuffer.empty())
+			{
+				loop.setWriteEnabled(fd,true);
+			}
+		}
+		else
+		{
+			client.outBuffer.append(client.inBuffer);
+			client.inBuffer.clear();
+			client.state=ConnectionState::WRITING;
+			loop.setWriteEnabled(fd,true);
+		}
 	}
 }
 
@@ -307,14 +347,14 @@ void CoreServer::checkTimeouts(EventLoop& loop)
 			continue;
 		}
 
-		if(client.state==ConnectionState::READING&&idle>_readTimeout)
+		if(client.state==ConnectionState::READING&& idle>_readTimeout)
 		{
 			Logger::info("Read timeout on fd "+std::to_string(client.fd));
 			toClose.push_back(client.fd);
 			continue;
 		}
 
-		if(client.state==ConnectionState::WRITING&&idle>_writeTimeout)
+		if(client.state==ConnectionState::WRITING&& idle>_writeTimeout)
 		{
 			Logger::info("Write timeout on fd "+std::to_string(client.fd));
 			toClose.push_back(client.fd);

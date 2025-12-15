@@ -7,10 +7,17 @@
 #include "core/Client.hpp"
 
 class EventLoop;
+class IHttpHandler;
 
 class CoreServer
 {
 public:
+	struct ListenConfig
+	{
+		unsigned short port;
+		std::size_t serverIndex;
+	};
+
 	explicit CoreServer(const std::string& configPath);
 	int run();
 
@@ -24,19 +31,23 @@ public:
 	void handleClientWrite(EventLoop& loop,int fd);
 	void closeClient(EventLoop& loop,int fd);
 
-	// вызывать только из EventLoop
 	void checkTimeouts(EventLoop& loop);
+
+	void setHttpHandler(IHttpHandler* handler);
+	void setListenConfigs(const std::vector<ListenConfig>& configs);
 
 private:
 	std::string _configPath;
 	std::vector<int> _listenFds;
-	std::vector<unsigned short> _ports;
+	std::vector<ListenConfig> _listenConfigs;
 	std::map<int,std::size_t> _listenFdToServerIndex;
 	std::map<int,Client> _clients;
 
 	std::chrono::seconds _readTimeout;
 	std::chrono::seconds _writeTimeout;
 	std::chrono::seconds _idleTimeout;
+
+	IHttpHandler* _httpHandler;
 
 	bool initListenSockets();
 	int createListenSocket(unsigned short port);
