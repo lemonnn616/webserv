@@ -6,11 +6,13 @@
 class IHttpHandler
 {
 public:
+	
 	virtual ~IHttpHandler()
 	{
 	}
 
-	virtual void onDataReceived(
+	virtual void onDataReceived
+	(
 		int clientFd,
 		std::string& inBuffer,
 		std::string& outBuffer,

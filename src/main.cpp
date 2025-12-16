@@ -1,13 +1,24 @@
 #include <iostream>
+
 #include "core/CoreServer.hpp"
+#include "http/HttpHandler.hpp"
 
-int	main(int argc, char** argv)
+
+int main(int argc, char** argv)
 {
-	const char* configPath = (argc > 1) ? argv[1] : "config/default.conf";
+	const char* configPath;
 
+	if (argc > 1)
+		configPath = argv[1];
+	else
+		configPath = "config/default.conf";
 	try
 	{
 		CoreServer server(configPath);
+
+		HttpHandler httpHandler;
+		server.setHttpHandler(&httpHandler);
+
 		return server.run();
 	}
 	catch (const std::exception& e)
