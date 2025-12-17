@@ -307,12 +307,16 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 			return;
 		}
 	}
-
-	if(client.outBuffer.empty())
-	{
-		client.state=ConnectionState::READING;
-		loop.setWriteEnabled(fd,false);
-	}
+	if (client.outBuffer.empty())
+		{
+			if (client.closeAfterWrite)
+			{
+				closeClient(loop, fd);
+				return;
+			}
+			client.state = ConnectionState::READING;
+			loop.setWriteEnabled(fd, false);
+		}
 }
 
 void CoreServer::closeClient(EventLoop& loop,int fd)
@@ -370,4 +374,15 @@ void CoreServer::checkTimeouts(EventLoop& loop)
 			closeClient(loop,fd);
 		}
 	}
+}
+const std::vector<ServerConfig>& CoreServer::getServerConfigs() const
+{
+	return _serverConfigs;
+}
+
+const ServerConfig& CoreServer::getServerConfig(std::size_t index) const
+{
+	if (index >= _serverConfigs.size())
+		return _serverConfigs[0];
+	return _serverConfigs[index];
 }

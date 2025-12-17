@@ -5,6 +5,8 @@
 #include <vector>
 #include <chrono>
 #include "core/Client.hpp"
+#include "ServerConfig.hpp"
+
 
 class EventLoop;
 class IHttpHandler;
@@ -35,8 +37,12 @@ public:
 
 	void setHttpHandler(IHttpHandler* handler);
 	void setListenConfigs(const std::vector<ListenConfig>& configs);
+	const ServerConfig& getServerConfig(std::size_t index) const;
+	const std::vector<ServerConfig>& getServerConfigs() const;
+
 
 private:
+	std::vector<ServerConfig> _serverConfigs;
 	std::string _configPath;
 	std::vector<int> _listenFds;
 	std::vector<ListenConfig> _listenConfigs;

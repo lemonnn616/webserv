@@ -11,8 +11,11 @@ struct Client
 	std::string inBuffer;
 	std::string outBuffer;
 	std::chrono::steady_clock::time_point lastActivity;
+
 	std::string sessionId;
 	std::size_t serverConfigIndex;
+
+	bool closeAfterWrite;
 
 	Client();
 };
