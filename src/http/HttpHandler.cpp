@@ -3,6 +3,7 @@
 #include "http/HttpResponse.hpp"
 
 #include <fstream>
+#include <cstdlib>
 
 // ================== ctor / dtor ==================
 
@@ -33,25 +34,6 @@ static std::string getContentType(const std::string& path)
 	return "application/octet-stream";
 }
 
-static void sendSimpleResponse(
-	std::string& outBuffer,
-	ConnectionState& state,
-	int status,
-	const std::string& reason,
-	const std::string& body
-)
-{
-	HttpResponse response;
-	response.status = status;
-	response.reason = reason;
-	response.body = body;
-	response.headers["Content-Length"] = std::to_string(body.size());
-	response.headers["Connection"] = "close";
-
-	outBuffer = response.serialize();
-	state = ConnectionState::WRITING;
-}
-
 static bool readFile(const std::string& path, std::string& out)
 {
 	std::ifstream file(path.c_str(), std::ios::in | std::ios::binary);
@@ -62,8 +44,28 @@ static bool readFile(const std::string& path, std::string& out)
 		(std::istreambuf_iterator<char>(file)),
 		std::istreambuf_iterator<char>()
 	);
-
 	return true;
+}
+
+static void sendResponse(
+	std::string& out,
+	ConnectionState& state,
+	int status,
+	const std::string& reason,
+	const std::string& body,
+	const std::string& contentType = "text/plain"
+)
+{
+	HttpResponse res;
+	res.status = status;
+	res.reason = reason;
+	res.body = body;
+	res.headers["Content-Length"] = std::to_string(body.size());
+	res.headers["Content-Type"] = contentType;
+	res.headers["Connection"] = "close";
+
+	out = res.serialize();
+	state = ConnectionState::WRITING;
 }
 
 // ================== main handler ==================
@@ -77,52 +79,49 @@ void HttpHandler::onDataReceived(
 	std::string&
 )
 {
-	// Есть ли полный HTTP-запрос
+	// ---------- 1. Headers ----------
 	size_t headersEnd = inBuffer.find("\r\n\r\n");
 	if (headersEnd == std::string::npos)
 		return;
 
-	// Забираем ОДИН запрос
-	std::string requestBlock = inBuffer.substr(0, headersEnd);
-	inBuffer.erase(0, headersEnd + 4);
+	std::string headersBlock = inBuffer.substr(0, headersEnd);
+	std::string rest = inBuffer.substr(headersEnd + 4);
 
-	// Делим на request-line и headers
-	size_t lineEnd = requestBlock.find("\r\n");
+	size_t lineEnd = headersBlock.find("\r\n");
 	if (lineEnd == std::string::npos)
 	{
-		sendSimpleResponse(outBuffer, state, 400, "Bad Request", "Bad Request\n");
+		sendResponse(outBuffer, state, 400, "Bad Request", "Bad Request\n");
 		return;
 	}
 
-	std::string requestLine = requestBlock.substr(0, lineEnd);
-	std::string headersPart = requestBlock.substr(lineEnd + 2);
+	std::string requestLine = headersBlock.substr(0, lineEnd);
+	std::string headersPart = headersBlock.substr(lineEnd + 2);
 
 	HttpRequest request;
 
-	// -------- request-line --------
-	size_t pos1 = requestLine.find(' ');
-	size_t pos2 = requestLine.find(' ', pos1 + 1);
-
-	if (pos1 == std::string::npos || pos2 == std::string::npos)
+	// ---------- request-line ----------
+	size_t p1 = requestLine.find(' ');
+	size_t p2 = requestLine.find(' ', p1 + 1);
+	if (p1 == std::string::npos || p2 == std::string::npos)
 	{
-		sendSimpleResponse(outBuffer, state, 400, "Bad Request", "Bad Request\n");
+		sendResponse(outBuffer, state, 400, "Bad Request", "Bad Request\n");
 		return;
 	}
 
-	request.method = requestLine.substr(0, pos1);
-	request.path = requestLine.substr(pos1 + 1, pos2 - pos1 - 1);
-	request.version = requestLine.substr(pos2 + 1);
+	request.method = requestLine.substr(0, p1);
+	request.path = requestLine.substr(p1 + 1, p2 - p1 - 1);
+	request.version = requestLine.substr(p2 + 1);
 
-	// -------- headers --------
-	size_t start = 0;
-	while (start < headersPart.size())
+	// ---------- headers ----------
+	size_t pos = 0;
+	while (pos < headersPart.size())
 	{
-		size_t end = headersPart.find("\r\n", start);
+		size_t end = headersPart.find("\r\n", pos);
 		if (end == std::string::npos)
 			break;
 
-		std::string line = headersPart.substr(start, end - start);
-		start = end + 2;
+		std::string line = headersPart.substr(pos, end - pos);
+		pos = end + 2;
 
 		if (line.empty())
 			break;
@@ -133,66 +132,56 @@ void HttpHandler::onDataReceived(
 
 		std::string key = line.substr(0, colon);
 		std::string value = line.substr(colon + 1);
-
 		if (!value.empty() && value[0] == ' ')
 			value.erase(0, 1);
 
 		request.headers[key] = value;
 	}
 
-	// ================== routing ==================
+	// ---------- body ----------
+	size_t contentLength = 0;
+	if (request.headers.count("Content-Length"))
+		contentLength = std::atoi(request.headers["Content-Length"].c_str());
 
-	// Поддерживаем только GET и HEAD
-	if (request.method != "GET" && request.method != "HEAD")
+	if (rest.size() < contentLength)
 	{
-		HttpResponse response;
-		response.status = 405;
-		response.reason = "Method Not Allowed";
-		response.body = "Method Not Allowed\n";
-		response.headers["Content-Length"] = "19";
-		response.headers["Connection"] = "close";
-		response.headers["Allow"] = "GET, HEAD";
-
-		outBuffer = response.serialize();
-		state = ConnectionState::WRITING;
+		// ждём body полностью
 		return;
 	}
 
-	// Защита от ../
-	if (request.path.find("..") != std::string::npos)
+	request.body = rest.substr(0, contentLength);
+	inBuffer.erase(0, headersEnd + 4 + contentLength);
+
+	// ================== ROUTING ==================
+
+	// ---- GET / ----
+	if (request.method == "GET" && request.path == "/")
 	{
-		sendSimpleResponse(outBuffer, state, 403, "Forbidden", "Forbidden\n");
+		std::string body;
+		if (!readFile("www/index.html", body))
+		{
+			sendResponse(outBuffer, state, 404, "Not Found", "Not Found\n");
+			return;
+		}
+
+		sendResponse(outBuffer, state, 200, "OK", body, "text/html");
 		return;
 	}
 
-	// default index
-	std::string path = request.path;
-	if (path == "/")
-		path = "/index.html";
-
-	std::string fullPath = "www" + path;
-
-	// ================== static file ==================
-
-	std::string body;
-	if (!readFile(fullPath, body))
+	// ---- POST /echo ----
+	if (request.method == "POST" && request.path == "/echo")
 	{
-		sendSimpleResponse(outBuffer, state, 404, "Not Found", "Not Found\n");
+		sendResponse(outBuffer, state, 200, "OK", request.body);
 		return;
 	}
 
-	HttpResponse response;
-	response.status = 200;
-	response.reason = "OK";
-	response.headers["Content-Length"] = std::to_string(body.size());
-	response.headers["Content-Type"] = getContentType(fullPath);
-	response.headers["Connection"] = "close";
+	// ---- unsupported method ----
+	if (request.method != "GET" && request.method != "POST")
+	{
+		sendResponse(outBuffer, state, 405, "Method Not Allowed", "Method Not Allowed\n");
+		return;
+	}
 
-	if (request.method == "GET")
-		response.body = body;
-	else
-		response.body = "";
-
-	outBuffer = response.serialize();
-	state = ConnectionState::WRITING;
+	// ---- fallback ----
+	sendResponse(outBuffer, state, 404, "Not Found", "Not Found\n");
 }
