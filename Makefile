@@ -1,27 +1,44 @@
 NAME := webserv
 
-MODULES := main core http config
+# -------- Modules --------
+MODULES := main core http utils config
 
+# -------- Directories --------
 DIR_main := src
 DIR_core := src/core
 DIR_http := src/http
+DIR_utils := src/utils
 DIR_config := config
 
+# -------- Sources --------
 SRC_main := main.cpp
 SRC_core := CoreServer.cpp EventLoop.cpp Client.cpp Logger.cpp
-SRC_http := HttpHandler.cpp HttpResponse.cpp
+
+SRC_http := \
+	HttpHandler.cpp \
+	HttpParser.cpp \
+	HttpRouter.cpp \
+	HttpResponse.cpp \
+	AutoIndex.cpp \
+	ErrorPage.cpp
+
+SRC_utils := FileUtils.cpp
 SRC_config := ConfigParser.cpp
 
+# -------- Build lists --------
 SRCS := $(foreach m,$(MODULES),$(addprefix $(DIR_$(m))/,$(SRC_$(m))))
 OBJ_DIR := obj
 
-OBJECTS := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(filter src/%.cpp,$(SRCS))) \
-           $(patsubst config/%.cpp,$(OBJ_DIR)/config/%.o,$(filter config/%.cpp,$(SRCS)))
+OBJECTS := \
+	$(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(filter src/%.cpp,$(SRCS))) \
+	$(patsubst config/%.cpp,$(OBJ_DIR)/config/%.o,$(filter config/%.cpp,$(SRCS)))
 
+# -------- Compiler --------
 CXX := c++
 CXXFLAGS := -Wall -Wextra -Werror -std=c++17 -O2
 INCLUDES := -Isrc -Iconfig
 
+# -------- Rules --------
 all: $(NAME)
 
 $(NAME): $(OBJECTS)
