@@ -4,9 +4,11 @@
 
 #include <fstream>
 #include <cstdlib>
-#include <cstdio>     // remove
-#include <sys/stat.h> // stat
-#include <dirent.h>   // opendir
+#include <cstdio>
+#include <sys/stat.h>
+#include <dirent.h>
+
+// ================== ctor / config ==================
 
 HttpHandler::HttpHandler()
 	: _cfgs(0)
@@ -21,6 +23,8 @@ void HttpHandler::setServerConfigs(const std::vector<ServerConfig>* cfgs)
 {
 	_cfgs = cfgs;
 }
+
+// ================== small utils ==================
 
 static std::string trimLeftOneSpace(const std::string& s)
 {
@@ -101,6 +105,8 @@ static std::string getContentType(const std::string& path)
 		return "image/png";
 	if (ext == "jpg" || ext == "jpeg")
 		return "image/jpeg";
+	if (ext == "txt")
+		return "text/plain";
 
 	return "application/octet-stream";
 }
@@ -111,8 +117,7 @@ static void sendResponse(
 	int status,
 	const std::string& reason,
 	const std::string& body,
-	const std::string& contentType,
-	bool closeAfterWrite
+	const std::string& contentType
 )
 {
 	HttpResponse res;
@@ -126,7 +131,6 @@ static void sendResponse(
 
 	out = res.serialize();
 	state = ConnectionState::WRITING;
-	(void)closeAfterWrite;
 }
 
 static void sendResponseNoBody(
@@ -142,6 +146,7 @@ static void sendResponseNoBody(
 	res.status = status;
 	res.reason = reason;
 	res.body = "";
+
 	res.headers["Content-Length"] = std::to_string(contentLength);
 	res.headers["Content-Type"] = contentType;
 	res.headers["Connection"] = "close";
@@ -150,16 +155,132 @@ static void sendResponseNoBody(
 	state = ConnectionState::WRITING;
 }
 
-static void sendSimple(
+static std::string defaultErrorBody(int status, const std::string& reason)
+{
+	std::string b;
+	b += "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>";
+	b += "<h1>";
+	b += std::to_string(status);
+	b += " ";
+	b += reason;
+	b += "</h1>";
+	b += "</body></html>\n";
+	return b;
+}
+
+static void sendErrorPage(
 	std::string& out,
 	ConnectionState& state,
+	const ServerConfig& cfg,
 	int status,
-	const std::string& reason,
-	const std::string& body
+	const std::string& reason
 )
 {
-	sendResponse(out, state, status, reason, body, "text/plain", true);
+	std::string body;
+
+	std::map<int, std::string>::const_iterator it = cfg.errorPages.find(status);
+	if (it != cfg.errorPages.end())
+	{
+		// errorPages paths считаем относительными от server.root
+		std::string fsPath = joinPath(cfg.root, it->second);
+		if (!readFile(fsPath, body))
+			body = defaultErrorBody(status, reason);
+	}
+	else
+	{
+		body = defaultErrorBody(status, reason);
+	}
+
+	sendResponse(out, state, status, reason, body, "text/html");
 }
+
+static bool isMethodAllowed(const LocationConfig& loc, const std::string& method)
+{
+	if (method == "GET") return loc.allowGet;
+	if (method == "HEAD") return loc.allowHead;
+	if (method == "POST") return loc.allowPost;
+	if (method == "DELETE") return loc.allowDelete;
+	return false;
+}
+
+// самый важный матчинг: выбираем location с самым длинным prefix
+static const LocationConfig& matchLocation(const ServerConfig& cfg, const std::string& path)
+{
+	std::size_t bestLen = 0;
+	std::size_t bestIdx = 0;
+
+	for (std::size_t i = 0; i < cfg.locations.size(); ++i)
+	{
+		const std::string& pfx = cfg.locations[i].prefix;
+		if (pfx.empty())
+			continue;
+
+		if (path.size() >= pfx.size() && path.compare(0, pfx.size(), pfx) == 0)
+		{
+			// важно: prefix должен совпадать по границе сегмента
+			// "/img" не должен матчить "/imagesX"
+			if (path.size() > pfx.size())
+			{
+				if (pfx[pfx.size() - 1] != '/' && path[pfx.size()] != '/')
+					continue;
+			}
+
+			if (pfx.size() > bestLen)
+			{
+				bestLen = pfx.size();
+				bestIdx = i;
+			}
+		}
+	}
+
+	return cfg.locations[bestIdx];
+}
+
+static std::string makeAutoindexHtml(const std::string& urlPath, const std::string& fsDir)
+{
+	DIR* d = opendir(fsDir.c_str());
+	if (!d)
+		return "";
+
+	std::string html;
+	html += "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>";
+	html += "<h1>Index of ";
+	html += urlPath;
+	html += "</h1><ul>";
+
+	struct dirent* ent;
+	while ((ent = readdir(d)) != 0)
+	{
+		std::string name(ent->d_name);
+		if (name == "." || name == "..")
+			continue;
+
+		html += "<li><a href=\"";
+		// аккуратно: если urlPath не заканчивается '/', добавим
+		if (!urlPath.empty() && urlPath[urlPath.size() - 1] == '/')
+			html += urlPath + name;
+		else
+			html += urlPath + "/" + name;
+
+		html += "\">";
+		html += name;
+		html += "</a></li>";
+	}
+
+	html += "</ul></body></html>\n";
+	closedir(d);
+	return html;
+}
+
+// URL -> относительный путь (без ведущего '/')
+static std::string stripLeadingSlash(const std::string& p)
+{
+	if (!p.empty() && p[0] == '/')
+		return p.substr(1);
+	return p;
+}
+
+// ================== main handler ==================
 
 void HttpHandler::onDataReceived(
 	int,
@@ -172,13 +293,14 @@ void HttpHandler::onDataReceived(
 {
 	if (_cfgs == 0 || _cfgs->empty())
 	{
-		sendSimple(outBuffer, state, 500, "Internal Server Error", "No config\n");
+		sendResponse(outBuffer, state, 500, "Internal Server Error", "No config\n", "text/plain");
 		return;
 	}
 
-	const ServerConfig& cfg = (serverConfigIndex < _cfgs->size()) ? (*_cfgs)[serverConfigIndex] : (*_cfgs)[0];
+	const ServerConfig& cfg =
+		(serverConfigIndex < _cfgs->size()) ? (*_cfgs)[serverConfigIndex] : (*_cfgs)[0];
 
-	// ---- 1) headers complete? ----
+	// ---------- 1) headers complete? ----------
 	std::size_t headersEnd = inBuffer.find("\r\n\r\n");
 	if (headersEnd == std::string::npos)
 		return;
@@ -186,31 +308,30 @@ void HttpHandler::onDataReceived(
 	std::string headersBlock = inBuffer.substr(0, headersEnd);
 	std::string rest = inBuffer.substr(headersEnd + 4);
 
-	// ---- 2) request-line / headers split ----
+	// ---------- 2) request-line / headers split ----------
 	std::size_t lineEnd = headersBlock.find("\r\n");
 	if (lineEnd == std::string::npos)
 	{
-		sendSimple(outBuffer, state, 400, "Bad Request", "Bad Request\n");
+		sendErrorPage(outBuffer, state, cfg, 400, "Bad Request");
 		return;
 	}
 
 	std::string requestLine = headersBlock.substr(0, lineEnd);
 	std::string headersPart = headersBlock.substr(lineEnd + 2);
 
-	// ---- 3) request-line ----
+	// ---------- 3) request-line ----------
 	HttpRequest request;
 
 	std::size_t p1 = requestLine.find(' ');
-	std::size_t p2;
 	if (p1 == std::string::npos)
 	{
-		sendSimple(outBuffer, state, 400, "Bad Request", "Bad Request\n");
+		sendErrorPage(outBuffer, state, cfg, 400, "Bad Request");
 		return;
 	}
-	p2 = requestLine.find(' ', p1 + 1);
+	std::size_t p2 = requestLine.find(' ', p1 + 1);
 	if (p2 == std::string::npos)
 	{
-		sendSimple(outBuffer, state, 400, "Bad Request", "Bad Request\n");
+		sendErrorPage(outBuffer, state, cfg, 400, "Bad Request");
 		return;
 	}
 
@@ -218,7 +339,14 @@ void HttpHandler::onDataReceived(
 	request.path = requestLine.substr(p1 + 1, p2 - p1 - 1);
 	request.version = requestLine.substr(p2 + 1);
 
-	// ---- 4) headers parse ----
+	// минимальная sanity-проверка
+	if (request.path.empty() || request.path[0] != '/')
+	{
+		sendErrorPage(outBuffer, state, cfg, 400, "Bad Request");
+		return;
+	}
+
+	// ---------- 4) headers parse ----------
 	std::size_t pos = 0;
 	while (pos < headersPart.size())
 	{
@@ -241,105 +369,37 @@ void HttpHandler::onDataReceived(
 		request.headers[key] = value;
 	}
 
-	// ---- 5) body (Content-Length only) ----
+	// ---------- 5) body (Content-Length only) ----------
 	std::size_t contentLength = 0;
 	if (request.headers.count("Content-Length"))
 		contentLength = static_cast<std::size_t>(std::atoi(request.headers["Content-Length"].c_str()));
 
 	if (contentLength > cfg.clientMaxBodySize)
 	{
-		sendSimple(outBuffer, state, 413, "Payload Too Large", "Payload Too Large\n");
+		sendErrorPage(outBuffer, state, cfg, 413, "Payload Too Large");
 		return;
 	}
 
 	if (rest.size() < contentLength)
-	{
-		// ждём весь body
-		return;
-	}
+		return; // ждём весь body
 
 	request.body = rest.substr(0, contentLength);
 	inBuffer.erase(0, headersEnd + 4 + contentLength);
 
-	// ---- Security: block ../ ----
+	// ---------- security ----------
 	if (pathHasDotDot(request.path))
 	{
-		sendSimple(outBuffer, state, 404, "Not Found", "Not Found\n");
+		sendErrorPage(outBuffer, state, cfg, 404, "Not Found");
 		return;
 	}
 
 	// =========================
-	// ROUTING
+	// ROUTING by location
 	// =========================
 
-	// 1) POST /upload/<name>  (или /upload -> upload.bin)
-	if (request.method == "POST")
-	{
-		std::string prefix = "/upload";
-		if (request.path == prefix || request.path.find(prefix + "/") == 0)
-		{
-			std::string name = "upload.bin";
-			if (request.path.find(prefix + "/") == 0)
-			{
-				name = request.path.substr(prefix.size() + 1);
-				if (name.empty())
-					name = "upload.bin";
-			}
+	const LocationConfig& loc = matchLocation(cfg, request.path);
 
-			std::string fsPath = joinPath(cfg.uploadDir, name);
-			if (!writeFile(fsPath, request.body))
-			{
-				sendSimple(outBuffer, state, 500, "Internal Server Error", "Upload failed\n");
-				return;
-			}
-
-			sendSimple(outBuffer, state, 201, "Created", "Created\n");
-			return;
-		}
-
-		// если POST не upload — пока 404 (потом сделаешь locations из конфига)
-		sendSimple(outBuffer, state, 404, "Not Found", "Not Found\n");
-		return;
-	}
-
-	// 2) DELETE /path/file
-	if (request.method == "DELETE")
-	{
-		if (request.path.empty() || request.path[0] != '/')
-		{
-			sendSimple(outBuffer, state, 400, "Bad Request", "Bad Request\n");
-			return;
-		}
-
-		std::string rel = request.path.substr(1);
-		std::string fsPath = joinPath(cfg.root, rel);
-
-		if (!fileExists(fsPath))
-		{
-			sendSimple(outBuffer, state, 404, "Not Found", "Not Found\n");
-			return;
-		}
-
-		if (isDirectory(fsPath))
-		{
-			sendSimple(outBuffer, state, 403, "Forbidden", "Forbidden\n");
-			return;
-		}
-
-		// В 42 обычно можно unlink(). Если у вас запрещено — скажи, заменим строго под список.
-		if (std::remove(fsPath.c_str()) != 0)
-		{
-			sendSimple(outBuffer, state, 403, "Forbidden", "Forbidden\n");
-			return;
-		}
-
-		// 204 без тела
-		sendResponseNoBody(outBuffer, state, 204, "No Content", "text/plain", 0);
-		return;
-	}
-
-	// 3) GET/HEAD static
-	if (request.method != "GET" && request.method != "HEAD")
+	if (!isMethodAllowed(loc, request.method))
 	{
 		HttpResponse res;
 		res.status = 405;
@@ -354,25 +414,126 @@ void HttpHandler::onDataReceived(
 		return;
 	}
 
-	// map URL -> fs
-	std::string rel;
-	if (request.path == "/")
-		rel = cfg.index;
-	else
-		rel = request.path.substr(1);
-
-	std::string fsPath = joinPath(cfg.root, rel);
-
-	// если это директория — пробуем index
-	if (isDirectory(fsPath))
+	// =========================
+	// POST upload (временно: без конфиг-правил, потом привяжем к location)
+	// =========================
+	if (request.method == "POST")
 	{
-		fsPath = joinPath(fsPath, cfg.index);
+		// простой протокол: POST /upload/<name>
+		std::string prefix = "/upload";
+		if (request.path == prefix || request.path.find(prefix + "/") == 0)
+		{
+			std::string name = "upload.bin";
+			if (request.path.find(prefix + "/") == 0)
+			{
+				name = request.path.substr(prefix.size() + 1);
+				if (name.empty())
+					name = "upload.bin";
+			}
+
+			std::string fsPath = joinPath(cfg.uploadDir, name);
+			if (!writeFile(fsPath, request.body))
+			{
+				sendErrorPage(outBuffer, state, cfg, 500, "Internal Server Error");
+				return;
+			}
+
+			sendResponse(outBuffer, state, 201, "Created", "Created\n", "text/plain");
+			return;
+		}
+
+		sendErrorPage(outBuffer, state, cfg, 404, "Not Found");
+		return;
 	}
 
+	// =========================
+	// DELETE static file
+	// =========================
+	if (request.method == "DELETE")
+	{
+		std::string rel = stripLeadingSlash(request.path);
+		std::string base = joinPath(cfg.root, loc.root);
+		std::string fsPath = joinPath(base, rel);
+
+		if (!fileExists(fsPath))
+		{
+			sendErrorPage(outBuffer, state, cfg, 404, "Not Found");
+			return;
+		}
+		if (isDirectory(fsPath))
+		{
+			sendErrorPage(outBuffer, state, cfg, 403, "Forbidden");
+			return;
+		}
+
+		if (std::remove(fsPath.c_str()) != 0)
+		{
+			sendErrorPage(outBuffer, state, cfg, 403, "Forbidden");
+			return;
+		}
+
+		sendResponseNoBody(outBuffer, state, 204, "No Content", "text/plain", 0);
+		return;
+	}
+
+	// =========================
+	// GET/HEAD static
+	// =========================
+	if (request.method != "GET" && request.method != "HEAD")
+	{
+		sendErrorPage(outBuffer, state, cfg, 405, "Method Not Allowed");
+		return;
+	}
+
+	// URL -> fs
+	std::string relUrl = stripLeadingSlash(request.path);
+
+	// base: server.root + location.root
+	std::string base = joinPath(cfg.root, loc.root);
+
+	// если запрос "/" → индекс
+	std::string fsPath;
+	if (request.path == "/")
+		fsPath = joinPath(base, loc.index);
+	else
+		fsPath = joinPath(base, relUrl);
+
+	// если это директория
+	if (isDirectory(fsPath))
+	{
+		std::string indexPath = joinPath(fsPath, loc.index);
+
+		if (fileExists(indexPath))
+		{
+			fsPath = indexPath;
+		}
+		else if (loc.autoindex)
+		{
+			std::string html = makeAutoindexHtml(request.path, fsPath);
+			if (html.empty())
+			{
+				sendErrorPage(outBuffer, state, cfg, 403, "Forbidden");
+				return;
+			}
+
+			if (request.method == "HEAD")
+				sendResponseNoBody(outBuffer, state, 200, "OK", "text/html", html.size());
+			else
+				sendResponse(outBuffer, state, 200, "OK", html, "text/html");
+			return;
+		}
+		else
+		{
+			sendErrorPage(outBuffer, state, cfg, 403, "Forbidden");
+			return;
+		}
+	}
+
+	// читаем файл
 	std::string body;
 	if (!readFile(fsPath, body))
 	{
-		sendSimple(outBuffer, state, 404, "Not Found", "Not Found\n");
+		sendErrorPage(outBuffer, state, cfg, 404, "Not Found");
 		return;
 	}
 
@@ -384,5 +545,5 @@ void HttpHandler::onDataReceived(
 		return;
 	}
 
-	sendResponse(outBuffer, state, 200, "OK", body, ct, true);
+	sendResponse(outBuffer, state, 200, "OK", body, ct);
 }
