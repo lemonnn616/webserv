@@ -70,6 +70,24 @@ void EventLoop::run(CoreServer& server)
 						return;
 					}
 				}
+				else if(server.isCgiFd(fd))
+				{
+					if(revents&(POLLERR|POLLHUP|POLLNVAL))
+					{
+						server.handleCgiRead(*this,fd);
+						continue;
+					}
+
+					if(revents&POLLIN)
+					{
+						server.handleCgiRead(*this,fd);
+					}
+
+					if(revents&POLLOUT)
+					{
+						server.handleCgiWrite(*this,fd);
+					}
+				}
 				else
 				{
 					if(revents&(POLLERR|POLLHUP|POLLNVAL))
@@ -77,10 +95,12 @@ void EventLoop::run(CoreServer& server)
 						server.closeClient(*this,fd);
 						continue;
 					}
+
 					if(revents&POLLIN)
 					{
 						server.handleClientRead(*this,fd);
 					}
+
 					if(revents&POLLOUT)
 					{
 						server.handleClientWrite(*this,fd);
@@ -131,6 +151,25 @@ void EventLoop::setWriteEnabled(int fd,bool enabled)
 			else
 			{
 				_pollFds[i].events=(short)(_pollFds[i].events&~POLLOUT);
+			}
+			break;
+		}
+	}
+}
+
+void EventLoop::setReadEnabled(int fd,bool enabled)
+{
+	for(std::size_t i=0;i<_pollFds.size();++i)
+	{
+		if(_pollFds[i].fd==fd)
+		{
+			if(enabled)
+			{
+				_pollFds[i].events=(short)(_pollFds[i].events|POLLIN);
+			}
+			else
+			{
+				_pollFds[i].events=(short)(_pollFds[i].events&~POLLIN);
 			}
 			break;
 		}

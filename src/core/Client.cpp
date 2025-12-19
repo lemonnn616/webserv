@@ -9,5 +9,6 @@ Client::Client()
 	, sessionId()
 	, serverConfigIndex(0)
 	, closeAfterWrite(false)
+	, outOffset(0)
 {
 }

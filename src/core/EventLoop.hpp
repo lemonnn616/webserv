@@ -13,6 +13,7 @@ public:
 	void addClient(int fd);
 	void removeFd(int fd);
 	void setWriteEnabled(int fd,bool enabled);
+	void setReadEnabled(int fd,bool enabled);
 
 private:
 	std::vector<struct pollfd> _pollFds;

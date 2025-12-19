@@ -6,6 +6,7 @@
 #include <chrono>
 #include "core/Client.hpp"
 #include "ServerConfig.hpp"
+#include "cgi/CgiProcess.hpp"
 
 
 class EventLoop;
@@ -40,6 +41,12 @@ public:
 	const ServerConfig& getServerConfig(std::size_t index) const;
 	const std::vector<ServerConfig>& getServerConfigs() const;
 
+	void registerCgiProcess(pid_t pid,int clientFd,int stdinFd,int stdoutFd,int stderrFd,const std::string& stdinData);
+	bool isCgiFd(int fd) const;
+	void handleCgiRead(EventLoop& loop,int fd);
+	void handleCgiWrite(EventLoop& loop,int fd);
+	void reapChildren(EventLoop& loop);
+
 
 private:
 	std::vector<ServerConfig> _serverConfigs;
@@ -48,6 +55,9 @@ private:
 	std::vector<ListenConfig> _listenConfigs;
 	std::map<int,std::size_t> _listenFdToServerIndex;
 	std::map<int,Client> _clients;
+	std::map<pid_t,CgiProcess> _cgi;
+	std::map<int,pid_t> _cgiFdToPid;
+	std::chrono::seconds _cgiTimeout;
 
 	std::chrono::seconds _readTimeout;
 	std::chrono::seconds _writeTimeout;
@@ -55,6 +65,8 @@ private:
 
 	IHttpHandler* _httpHandler;
 
+	void cleanupCgi(EventLoop& loop,pid_t pid);
+	void checkCgiTimeouts(EventLoop& loop);
 	bool initListenSockets();
 	int createListenSocket(unsigned short port);
 };

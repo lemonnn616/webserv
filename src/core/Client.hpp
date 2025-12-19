@@ -16,6 +16,7 @@ struct Client
 	std::size_t serverConfigIndex;
 
 	bool closeAfterWrite;
+	std::size_t outOffset;
 
 	Client();
 };
