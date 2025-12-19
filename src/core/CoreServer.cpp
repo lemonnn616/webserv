@@ -14,6 +14,8 @@
 #include <vector>
 #include <sys/wait.h>
 #include <signal.h>
+#include <set>
+#include <stdexcept>
 
 CoreServer::CoreServer(const std::string& configPath)
 	:_serverConfigs()
@@ -30,17 +32,39 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_idleTimeout(std::chrono::seconds(120))
 	,_httpHandler(nullptr)
 {
-	ServerConfig scfg;
 	ConfigParser parser;
-	parser.parseFile(_configPath,scfg);
+	if(!parser.parseFile(_configPath,_serverConfigs))
+	{
+		throw std::runtime_error("Bad config: "+_configPath);
+	}
 
-	_serverConfigs.push_back(scfg);
+	if(_serverConfigs.empty())
+	{
+		_serverConfigs.push_back(ServerConfig());
+	}
 
 	_listenConfigs.clear();
-	ListenConfig cfg;
-	cfg.port=scfg.listenPort;
-	cfg.serverIndex=0;
-	_listenConfigs.push_back(cfg);
+
+	std::set<unsigned short> ports;
+	for(std::size_t i=0;i<_serverConfigs.size();++i)
+	{
+		unsigned short port=_serverConfigs[i].listenPort;
+		if(ports.insert(port).second)
+		{
+			ListenConfig cfg;
+			cfg.port=port;
+			cfg.serverIndex=i;
+			_listenConfigs.push_back(cfg);
+		}
+	}
+
+	if(_listenConfigs.empty())
+	{
+		ListenConfig cfg;
+		cfg.port=8080;
+		cfg.serverIndex=0;
+		_listenConfigs.push_back(cfg);
+	}
 }
 
 int CoreServer::run()

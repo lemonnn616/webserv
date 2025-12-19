@@ -6,15 +6,19 @@
 
 struct LocationConfig
 {
-	std::string prefix;          // "/upload", "/images", "/"
-	std::string root;            // "" или "static" и т.п. (относительно server.root)
-	std::string index;           // "index.html"
-	bool autoindex;              // on/off
+	std::string prefix;
+	std::string root;
+	std::string index;
+	bool autoindex;
 
 	bool allowGet;
 	bool allowHead;
 	bool allowPost;
 	bool allowDelete;
+
+	bool hasReturn;
+	int returnCode;
+	std::string returnUrl;
 
 	LocationConfig()
 		: prefix("/")
@@ -25,6 +29,9 @@ struct LocationConfig
 		, allowHead(true)
 		, allowPost(false)
 		, allowDelete(false)
+		, hasReturn(false)
+		, returnCode(0)
+		, returnUrl("")
 	{
 	}
 };
@@ -32,34 +39,46 @@ struct LocationConfig
 struct ServerConfig
 {
 	unsigned short listenPort;
-	std::string root;                 // "www"
-	std::string index;                // "index.html"
-	std::string uploadDir;            // "www/uploads"
-	std::size_t clientMaxBodySize;    // лимит body
+	std::vector<std::string> serverNames;
 
-	std::map<int, std::string> errorPages;  // 404 -> "errors/404.html"
+	std::string root;
+	std::string index;
+	std::string uploadDir;
+	std::size_t clientMaxBodySize;
+
+	std::map<int, std::string> errorPages;
+	std::map<std::string, std::string> cgi;
+
+	bool sessionEnabled;
+	std::size_t sessionTimeout;
+	std::string sessionStorePath;
+
 	std::vector<LocationConfig> locations;
 
 	ServerConfig()
 		: listenPort(8080)
+		, serverNames()
 		, root("www")
 		, index("index.html")
 		, uploadDir("www/uploads")
 		, clientMaxBodySize(1000000)
 		, errorPages()
+		, cgi()
+		, sessionEnabled(false)
+		, sessionTimeout(0)
+		, sessionStorePath("")
 		, locations()
 	{
-		// дефолтный location "/"
 		LocationConfig loc;
-		loc.prefix = "/";
-		loc.root = "";
-		loc.index = index;
-		loc.autoindex = false;
+		loc.prefix="/";
+		loc.root="";
+		loc.index=index;
+		loc.autoindex=false;
 
-		loc.allowGet = true;
-		loc.allowHead = true;
-		loc.allowPost = true;
-		loc.allowDelete = true;
+		loc.allowGet=true;
+		loc.allowHead=true;
+		loc.allowPost=true;
+		loc.allowDelete=true;
 
 		locations.push_back(loc);
 	}
