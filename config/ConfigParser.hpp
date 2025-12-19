@@ -1,13 +1,14 @@
 #pragma once
 
 #include <string>
-#include "config/ServerConfig.hpp"
+
+struct ServerConfig;
 
 class ConfigParser
 {
 public:
 	ConfigParser();
-	bool parseFile(const std::string& path, ServerConfig& out);
+	bool parseFile(const std::string& path,ServerConfig& out);
 
 private:
 	static std::string trim(const std::string& s);

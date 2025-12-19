@@ -1,4 +1,5 @@
-#include "config/ConfigParser.hpp"
+#include "ConfigParser.hpp"
+#include "ServerConfig.hpp"
 #include "core/Logger.hpp"
 
 #include <fstream>

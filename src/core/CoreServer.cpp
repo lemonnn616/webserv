@@ -2,6 +2,7 @@
 #include "core/EventLoop.hpp"
 #include "core/Logger.hpp"
 #include "http/IHttpHandler.hpp"
+#include "ConfigParser.hpp"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -23,8 +24,15 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_idleTimeout(std::chrono::seconds(120))
 	,_httpHandler(nullptr)
 {
+	ServerConfig scfg;
+	ConfigParser parser;
+	parser.parseFile(_configPath,scfg);
+
+	_serverConfigs.push_back(scfg);
+
+	_listenConfigs.clear();
 	ListenConfig cfg;
-	cfg.port=8080;
+	cfg.port=scfg.listenPort;
 	cfg.serverIndex=0;
 	_listenConfigs.push_back(cfg);
 }
@@ -262,6 +270,7 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 
 			if(client.state==ConnectionState::WRITING&& !client.outBuffer.empty())
 			{
+				client.closeAfterWrite=true;
 				loop.setWriteEnabled(fd,true);
 			}
 		}
@@ -270,10 +279,12 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 			client.outBuffer.append(client.inBuffer);
 			client.inBuffer.clear();
 			client.state=ConnectionState::WRITING;
+			client.closeAfterWrite=true;
 			loop.setWriteEnabled(fd,true);
 		}
 	}
 }
+
 
 void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 {
