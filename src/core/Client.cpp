@@ -10,5 +10,6 @@ Client::Client()
 	, serverConfigIndex(0)
 	, closeAfterWrite(false)
 	, outOffset(0)
+	, listenPort(0)
 {
 }

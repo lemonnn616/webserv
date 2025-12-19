@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <set>
 #include <stdexcept>
+#include <cctype>
 
 CoreServer::CoreServer(const std::string& configPath)
 	:_serverConfigs()
@@ -23,6 +24,7 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_listenFds()
 	,_listenConfigs()
 	,_listenFdToServerIndex()
+	,_listenFdToPort()
 	,_clients()
 	,_cgi()
 	,_cgiFdToPid()
@@ -106,10 +108,12 @@ bool CoreServer::initListenSockets()
 			}
 			_listenFds.clear();
 			_listenFdToServerIndex.clear();
+			_listenFdToPort.clear();
 			return false;
 		}
 		_listenFds.push_back(fd);
 		_listenFdToServerIndex[fd]=cfg.serverIndex;
+		_listenFdToPort[fd]=cfg.port;
 		Logger::info("Listening on port "+std::to_string(cfg.port));
 	}
 	return true;
@@ -201,9 +205,20 @@ std::size_t CoreServer::getServerIndexForListenFd(int fd) const
 	return 0;
 }
 
+unsigned short CoreServer::getListenPortForListenFd(int fd) const
+{
+	std::map<int,unsigned short>::const_iterator it=_listenFdToPort.find(fd);
+	if(it!=_listenFdToPort.end())
+	{
+		return it->second;
+	}
+	return 0;
+}
+
 void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 {
 	std::size_t serverIndex=getServerIndexForListenFd(listenFd);
+	unsigned short listenPort=getListenPortForListenFd(listenFd);
 
 	while(true)
 	{
@@ -234,12 +249,154 @@ void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 		client.state=ConnectionState::READING;
 		client.lastActivity=std::chrono::steady_clock::now();
 		client.serverConfigIndex=serverIndex;
+		client.listenPort=listenPort;
 
 		_clients[clientFd]=client;
 		loop.addClient(clientFd);
 
 		Logger::info("New client fd "+std::to_string(clientFd));
 	}
+}
+
+static std::string toLowerStr(const std::string& s)
+{
+	std::string r=s;
+	for(std::size_t i=0;i<r.size();++i)
+	{
+		r[i]=static_cast<char>(std::tolower(static_cast<unsigned char>(r[i])));
+	}
+	return r;
+}
+
+static std::string ltrimSpaces(const std::string& s)
+{
+	std::size_t i=0;
+	while(i<s.size()&&(s[i]==' '||s[i]=='\t'))
+	{
+		++i;
+	}
+	return s.substr(i);
+}
+
+static std::string extractHostFromHeadersBlock(const std::string& headersBlock)
+{
+	std::size_t lineEnd=headersBlock.find("\r\n");
+	if(lineEnd==std::string::npos)
+	{
+		return "";
+	}
+
+	std::size_t pos=lineEnd+2;
+
+	while(pos<headersBlock.size())
+	{
+		std::size_t end=headersBlock.find("\r\n",pos);
+		if(end==std::string::npos)
+		{
+			break;
+		}
+
+		std::string line=headersBlock.substr(pos,end-pos);
+		pos=end+2;
+
+		if(line.empty())
+		{
+			break;
+		}
+
+		std::size_t colon=line.find(':');
+		if(colon==std::string::npos)
+		{
+			continue;
+		}
+
+		std::string key=toLowerStr(line.substr(0,colon));
+		std::string val=ltrimSpaces(line.substr(colon+1));
+
+		if(key=="host")
+		{
+			if(!val.empty()&& val[0]=='[')
+			{
+				std::size_t close=val.find(']');
+				if(close!=std::string::npos&& close>1)
+				{
+					val=val.substr(1,close-1);
+				}
+			}
+			else
+			{
+				std::size_t p=val.find(':');
+				if(p!=std::string::npos)
+				{
+					val=val.substr(0,p);
+				}
+			}
+			return toLowerStr(val);
+		}
+	}
+
+	return "";
+}
+
+std::size_t CoreServer::selectServerIndexByHost(unsigned short port,std::size_t defaultIndex,const std::string& host) const
+{
+	std::size_t firstOnPort=defaultIndex;
+	bool firstSet=false;
+
+	for(std::size_t i=0;i<_serverConfigs.size();++i)
+	{
+		const ServerConfig& cfg=_serverConfigs[i];
+		if(cfg.listenPort!=port)
+		{
+			continue;
+		}
+
+		if(!firstSet)
+		{
+			firstOnPort=i;
+			firstSet=true;
+		}
+
+		for(std::size_t j=0;j<cfg.serverNames.size();++j)
+		{
+			if(toLowerStr(cfg.serverNames[j])==host)
+			{
+				return i;
+			}
+		}
+	}
+
+	return firstSet ? firstOnPort : defaultIndex;
+}
+
+void CoreServer::updateServerIndexFromHost(Client& client)
+{
+	std::size_t headersEnd=client.inBuffer.find("\r\n\r\n");
+	if(headersEnd==std::string::npos)
+	{
+		return;
+	}
+
+	std::string headersBlock=client.inBuffer.substr(0,headersEnd);
+	std::string host=extractHostFromHeadersBlock(headersBlock);
+	if(host.empty())
+	{
+		return;
+	}
+
+	std::size_t def=client.serverConfigIndex;
+	if(def>=_serverConfigs.size())
+	{
+		def=0;
+	}
+
+	unsigned short port=client.listenPort;
+	if(port==0&& def<_serverConfigs.size())
+	{
+		port=_serverConfigs[def].listenPort;
+	}
+
+	client.serverConfigIndex=selectServerIndexByHost(port,def,host);
 }
 
 void CoreServer::handleClientRead(EventLoop& loop,int fd)
@@ -283,6 +440,8 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 	{
 		if(_httpHandler!=nullptr)
 		{
+			updateServerIndexFromHost(client);
+
 			_httpHandler->onDataReceived(
 				fd,
 				client.inBuffer,
@@ -318,7 +477,6 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 		}
 	}
 }
-
 
 void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 {
@@ -454,7 +612,7 @@ const std::vector<ServerConfig>& CoreServer::getServerConfigs() const
 
 const ServerConfig& CoreServer::getServerConfig(std::size_t index) const
 {
-	if (index >= _serverConfigs.size())
+	if(index>=_serverConfigs.size())
 		return _serverConfigs[0];
 	return _serverConfigs[index];
 }

@@ -18,5 +18,7 @@ struct Client
 	bool closeAfterWrite;
 	std::size_t outOffset;
 
+	unsigned short listenPort;
+
 	Client();
 };

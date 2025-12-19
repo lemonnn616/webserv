@@ -4,10 +4,10 @@
 #include <map>
 #include <vector>
 #include <chrono>
+#include <sys/types.h>
 #include "core/Client.hpp"
 #include "ServerConfig.hpp"
 #include "cgi/CgiProcess.hpp"
-
 
 class EventLoop;
 class IHttpHandler;
@@ -47,13 +47,14 @@ public:
 	void handleCgiWrite(EventLoop& loop,int fd);
 	void reapChildren(EventLoop& loop);
 
-
 private:
 	std::vector<ServerConfig> _serverConfigs;
 	std::string _configPath;
 	std::vector<int> _listenFds;
 	std::vector<ListenConfig> _listenConfigs;
 	std::map<int,std::size_t> _listenFdToServerIndex;
+	std::map<int,unsigned short> _listenFdToPort;
+
 	std::map<int,Client> _clients;
 	std::map<pid_t,CgiProcess> _cgi;
 	std::map<int,pid_t> _cgiFdToPid;
@@ -69,4 +70,8 @@ private:
 	void checkCgiTimeouts(EventLoop& loop);
 	bool initListenSockets();
 	int createListenSocket(unsigned short port);
+
+	unsigned short getListenPortForListenFd(int fd) const;
+	void updateServerIndexFromHost(Client& client);
+	std::size_t selectServerIndexByHost(unsigned short port,std::size_t defaultIndex,const std::string& host) const;
 };
