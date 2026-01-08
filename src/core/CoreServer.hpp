@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <chrono>
+#include <signal.h>
 #include <sys/types.h>
 #include "core/Client.hpp"
 #include "ServerConfig.hpp"
@@ -47,6 +48,10 @@ public:
 	void handleCgiWrite(EventLoop& loop,int fd);
 	void reapChildren(EventLoop& loop);
 
+	static void handleStopSignal(int signum);
+	static bool stopRequested();
+	void shutdown(EventLoop& loop);
+
 private:
 	std::vector<ServerConfig> _serverConfigs;
 	std::string _configPath;
@@ -74,4 +79,7 @@ private:
 	unsigned short getListenPortForListenFd(int fd) const;
 	void updateServerIndexFromHost(Client& client);
 	std::size_t selectServerIndexByHost(unsigned short port,std::size_t defaultIndex,const std::string& host) const;
+
+	static volatile sig_atomic_t _stopRequested;
+
 };

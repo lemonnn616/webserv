@@ -25,7 +25,7 @@ void EventLoop::run(CoreServer& server)
 
 	Logger::info("EventLoop started");
 
-	while(true)
+	while(!CoreServer::stopRequested())
 	{
 		int timeoutMs=1000;
 		int ret=::poll(_pollFds.data(),_pollFds.size(),timeoutMs);
@@ -34,11 +34,17 @@ void EventLoop::run(CoreServer& server)
 		{
 			if(errno==EINTR)
 			{
+				if(CoreServer::stopRequested())
+				{
+					break;
+				}
 				continue;
 			}
 			Logger::error("poll failed");
 			break;
 		}
+
+		bool fatal=false;
 
 		if(ret>0)
 		{
@@ -67,7 +73,8 @@ void EventLoop::run(CoreServer& server)
 					if(revents&(POLLERR|POLLHUP|POLLNVAL))
 					{
 						Logger::error("Listen socket error");
-						return;
+						fatal=true;
+						break;
 					}
 				}
 				else if(server.isCgiFd(fd))
@@ -111,8 +118,15 @@ void EventLoop::run(CoreServer& server)
 			compact();
 		}
 
+		if(fatal)
+		{
+			break;
+		}
+
 		server.checkTimeouts(*this);
 	}
+
+	server.shutdown(*this);
 }
 
 void EventLoop::addClient(int fd)
