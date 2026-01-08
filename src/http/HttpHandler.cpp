@@ -2,7 +2,6 @@
 #include "http/HttpParser.hpp"
 #include "http/HttpRouter.hpp"
 
-
 HttpHandler::~HttpHandler() {}
 
 HttpHandler::HttpHandler()
@@ -12,7 +11,7 @@ HttpHandler::HttpHandler()
 
 void HttpHandler::setServerConfigs(const std::vector<ServerConfig>* cfgs)
 {
-	_cfgs = cfgs;
+	_cfgs=cfgs;
 }
 
 void HttpHandler::onDataReceived(
@@ -24,17 +23,17 @@ void HttpHandler::onDataReceived(
 	std::string&
 )
 {
-	if (!_cfgs || _cfgs->empty())
+	if(!_cfgs||_cfgs->empty())
 		return;
 
-	const ServerConfig& cfg =
-		(serverConfigIndex < _cfgs->size()) ? (*_cfgs)[serverConfigIndex] : (*_cfgs)[0];
+	const ServerConfig& cfg=
+		(serverConfigIndex<_cfgs->size()) ? (*_cfgs)[serverConfigIndex] : (*_cfgs)[0];
 
 	HttpRequest req;
-	if (!HttpParser::parse(inBuffer, req, cfg.clientMaxBodySize))
+	if(!HttpParser::parse(inBuffer,req,cfg.clientMaxBodySize))
 		return;
 
-	HttpResponse res = HttpRouter::route(req, cfg);
-	outBuffer = res.serialize();
-	state = ConnectionState::WRITING;
+	HttpResponse res=HttpRouter::route(req,cfg);
+	outBuffer=res.serialize();
+	state=ConnectionState::WRITING;
 }
