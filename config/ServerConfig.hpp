@@ -23,7 +23,7 @@ struct LocationConfig
 	LocationConfig()
 		: prefix("/")
 		, root("")
-		, index("index.html")
+		, index("")
 		, autoindex(false)
 		, allowGet(true)
 		, allowHead(true)

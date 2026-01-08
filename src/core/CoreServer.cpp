@@ -33,7 +33,9 @@ CoreServer::CoreServer(const std::string& configPath)
 	ConfigParser parser;
 	if(!parser.parseFile(_configPath,_serverConfigs))
 	{
-		throw std::runtime_error("Bad config: "+_configPath);
+		if(parser.getError().empty())
+			throw std::runtime_error("Bad config: "+_configPath);
+		throw std::runtime_error(parser.getError());
 	}
 
 	if(_serverConfigs.empty())

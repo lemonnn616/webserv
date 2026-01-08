@@ -29,7 +29,13 @@ SRC_http := \
 	ErrorPage.cpp
 
 SRC_utils := FileUtils.cpp
-SRC_config := ConfigParser.cpp
+
+SRC_config := \
+	ConfigParser.cpp \
+	ConfigParserLexer.cpp \
+	ConfigParserParser.cpp \
+	ConfigParserDirectives.cpp \
+	ConfigParserNormalize.cpp
 
 SRCS := $(foreach m,$(MODULES),$(addprefix $(DIR_$(m))/,$(SRC_$(m))))
 OBJ_DIR := obj
