@@ -21,6 +21,8 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_listenConfigs()
 	,_listenFdToServerIndex()
 	,_listenFdToPort()
+	,_defaultServerByPort()
+	,_serverByPortHost()
 	,_clients()
 	,_cgi()
 	,_cgiFdToPid()
@@ -41,6 +43,31 @@ CoreServer::CoreServer(const std::string& configPath)
 	if(_serverConfigs.empty())
 	{
 		_serverConfigs.push_back(ServerConfig());
+	}
+
+	_defaultServerByPort.clear();
+	_serverByPortHost.clear();
+
+	for(std::size_t i=0;i<_serverConfigs.size();++i)
+	{
+		const ServerConfig& srv=_serverConfigs[i];
+		unsigned short port=srv.listenPort;
+
+		if(_defaultServerByPort.find(port)==_defaultServerByPort.end())
+		{
+			_defaultServerByPort[port]=i;
+		}
+
+		std::map<std::string,std::size_t>& hostMap=_serverByPortHost[port];
+
+		for(std::size_t j=0;j<srv.serverNames.size();++j)
+		{
+			const std::string& name=srv.serverNames[j];
+			if(!name.empty()&& hostMap.find(name)==hostMap.end())
+			{
+				hostMap[name]=i;
+			}
+		}
 	}
 
 	_listenConfigs.clear();

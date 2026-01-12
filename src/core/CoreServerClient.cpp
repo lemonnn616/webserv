@@ -9,6 +9,124 @@
 #include <unistd.h>
 #include <cerrno>
 #include <vector>
+#include <cctype>
+#include <limits>
+
+static const std::size_t MAX_HEADER_BYTES=64*1024;
+
+static std::string makePlainResponse(int status,const std::string& reason,const std::string& body)
+{
+	std::string res;
+	res+="HTTP/1.1 ";
+	res+=std::to_string(status);
+	res+=" ";
+	res+=reason;
+	res+="\r\n";
+	res+="Connection: close\r\n";
+	res+="Content-Type: text/plain\r\n";
+	res+="Content-Length: ";
+	res+=std::to_string(body.size());
+	res+="\r\n";
+	res+="\r\n";
+	res+=body;
+	return res;
+}
+
+static void failClose(EventLoop& loop,int fd,Client& client,int status,const std::string& reason,const std::string& body)
+{
+	std::string().swap(client.inBuffer);
+
+	client.outBuffer=makePlainResponse(status,reason,body);
+	client.state=ConnectionState::WRITING;
+	client.closeAfterWrite=true;
+	client.outOffset=0;
+
+	loop.setReadEnabled(fd,false);
+	loop.setWriteEnabled(fd,true);
+}
+
+static std::string toLowerStr(const std::string& s)
+{
+	std::string r=s;
+	for(std::size_t i=0;i<r.size();++i)
+	{
+		r[i]=static_cast<char>(std::tolower(static_cast<unsigned char>(r[i])));
+	}
+	return r;
+}
+
+static std::string ltrimSpaces(const std::string& s)
+{
+	std::size_t i=0;
+	while(i<s.size()&&(s[i]==' '||s[i]=='\t'))
+	{
+		++i;
+	}
+	return s.substr(i);
+}
+
+static bool parseSizeTStrict(const std::string& s,std::size_t& out)
+{
+	if(s.empty())
+		return false;
+
+	unsigned long long v=0;
+
+	for(std::size_t i=0;i<s.size();++i)
+	{
+		unsigned char c=static_cast<unsigned char>(s[i]);
+		if(!std::isdigit(c))
+			return false;
+
+		unsigned int d=(unsigned int)(c-'0');
+		if(v>(std::numeric_limits<unsigned long long>::max()-d)/10ULL)
+			return false;
+
+		v=v*10ULL+d;
+	}
+
+	if(v>(unsigned long long)std::numeric_limits<std::size_t>::max())
+		return false;
+
+	out=(std::size_t)v;
+	return true;
+}
+
+static bool extractContentLength(const std::string& headersBlock,std::size_t& out)
+{
+	std::size_t lineEnd=headersBlock.find("\r\n");
+	if(lineEnd==std::string::npos)
+		return false;
+
+	std::size_t pos=lineEnd+2;
+
+	while(pos<headersBlock.size())
+	{
+		std::size_t end=headersBlock.find("\r\n",pos);
+		if(end==std::string::npos)
+			break;
+
+		std::string line=headersBlock.substr(pos,end-pos);
+		pos=end+2;
+
+		if(line.empty())
+			break;
+
+		std::size_t colon=line.find(':');
+		if(colon==std::string::npos)
+			continue;
+
+		std::string key=toLowerStr(line.substr(0,colon));
+		std::string val=ltrimSpaces(line.substr(colon+1));
+
+		if(key=="content-length")
+		{
+			return parseSizeTStrict(val,out);
+		}
+	}
+
+	return false;
+}
 
 void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 {
@@ -90,45 +208,98 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 		}
 	}
 
-	if(!client.inBuffer.empty())
+	if(client.inBuffer.empty())
 	{
-		if(_httpHandler!=nullptr)
+		return;
+	}
+
+	std::size_t headersEnd=client.inBuffer.find("\r\n\r\n");
+
+	if(headersEnd==std::string::npos)
+	{
+		if(client.inBuffer.size()>MAX_HEADER_BYTES)
 		{
-			updateServerIndexFromHost(client);
-
-			_httpHandler->onDataReceived(
-				fd,
-				client.inBuffer,
-				client.outBuffer,
-				client.state,
-				client.serverConfigIndex,
-				client.sessionId
-			);
-
-			if(client.state==ConnectionState::CLOSING)
-			{
-				closeClient(loop,fd);
-				return;
-			}
-
-			if(client.state==ConnectionState::WRITING&& !client.outBuffer.empty())
-			{
-				client.closeAfterWrite=true;
-				client.outOffset=0;
-				loop.setReadEnabled(fd,false);
-				loop.setWriteEnabled(fd,true);
-			}
+			failClose(loop,fd,client,431,"Request Header Fields Too Large","Headers too large\n");
+		}
+	}
+	else
+	{
+		std::size_t headerBytes=headersEnd+4;
+		if(headerBytes>MAX_HEADER_BYTES)
+		{
+			failClose(loop,fd,client,431,"Request Header Fields Too Large","Headers too large\n");
 		}
 		else
 		{
-			client.outBuffer.append(client.inBuffer);
-			client.inBuffer.clear();
-			client.state=ConnectionState::WRITING;
+			updateServerIndexFromHost(client);
+
+			std::size_t idx=client.serverConfigIndex;
+			if(idx>=_serverConfigs.size())
+				idx=0;
+
+			std::size_t maxBody=_serverConfigs[idx].clientMaxBodySize;
+
+			std::size_t contentLength=0;
+			std::string headersBlock=client.inBuffer.substr(0,headersEnd);
+
+			if(extractContentLength(headersBlock,contentLength))
+			{
+				if(contentLength>maxBody)
+				{
+					failClose(loop,fd,client,413,"Payload Too Large","Payload Too Large\n");
+				}
+			}
+
+			if(client.state!=ConnectionState::WRITING)
+			{
+				std::size_t bodyBytes=client.inBuffer.size()-headerBytes;
+				if(bodyBytes>maxBody)
+				{
+					failClose(loop,fd,client,413,"Payload Too Large","Payload Too Large\n");
+				}
+			}
+		}
+	}
+
+	if(client.state==ConnectionState::WRITING)
+	{
+		return;
+	}
+
+	if(_httpHandler!=nullptr)
+	{
+		_httpHandler->onDataReceived(
+			fd,
+			client.inBuffer,
+			client.outBuffer,
+			client.state,
+			client.serverConfigIndex,
+			client.sessionId
+		);
+
+		if(client.state==ConnectionState::CLOSING)
+		{
+			closeClient(loop,fd);
+			return;
+		}
+
+		if(client.state==ConnectionState::WRITING&& !client.outBuffer.empty())
+		{
 			client.closeAfterWrite=true;
 			client.outOffset=0;
 			loop.setReadEnabled(fd,false);
 			loop.setWriteEnabled(fd,true);
 		}
+	}
+	else
+	{
+		client.outBuffer.append(client.inBuffer);
+		client.inBuffer.clear();
+		client.state=ConnectionState::WRITING;
+		client.closeAfterWrite=true;
+		client.outOffset=0;
+		loop.setReadEnabled(fd,false);
+		loop.setWriteEnabled(fd,true);
 	}
 }
 

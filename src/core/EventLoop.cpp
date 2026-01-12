@@ -12,15 +12,12 @@ EventLoop::EventLoop()
 void EventLoop::run(CoreServer& server)
 {
 	_pollFds.clear();
+	_fdToIndex.clear();
 
 	const std::vector<int>& listenFds=server.getListenFds();
 	for(std::size_t i=0;i<listenFds.size();++i)
 	{
-		struct pollfd p;
-		p.fd=listenFds[i];
-		p.events=POLLIN;
-		p.revents=0;
-		_pollFds.push_back(p);
+		addFd(listenFds[i],POLLIN);
 	}
 
 	Logger::info("EventLoop started");
@@ -129,64 +126,85 @@ void EventLoop::run(CoreServer& server)
 	server.shutdown(*this);
 }
 
-void EventLoop::addClient(int fd)
+void EventLoop::addFd(int fd,short events)
 {
+	std::map<int,std::size_t>::iterator it=_fdToIndex.find(fd);
+	if(it!=_fdToIndex.end())
+	{
+		std::size_t idx=it->second;
+		_pollFds[idx].events=events;
+		_pollFds[idx].revents=0;
+		return;
+	}
+
 	struct pollfd p;
 	p.fd=fd;
-	p.events=POLLIN;
+	p.events=events;
 	p.revents=0;
+
+	_fdToIndex[fd]=_pollFds.size();
 	_pollFds.push_back(p);
+}
+
+void EventLoop::addClient(int fd)
+{
+	addFd(fd,POLLIN);
 }
 
 void EventLoop::removeFd(int fd)
 {
-	for(std::size_t i=0;i<_pollFds.size();++i)
+	std::map<int,std::size_t>::iterator it=_fdToIndex.find(fd);
+	if(it==_fdToIndex.end())
 	{
-		if(_pollFds[i].fd==fd)
-		{
-			_pollFds[i].fd=-1;
-			_pollFds[i].events=0;
-			_pollFds[i].revents=0;
-			break;
-		}
+		return;
 	}
+
+	std::size_t idx=it->second;
+
+	_pollFds[idx].fd=-1;
+	_pollFds[idx].events=0;
+	_pollFds[idx].revents=0;
+
+	_fdToIndex.erase(it);
 }
 
 void EventLoop::setWriteEnabled(int fd,bool enabled)
 {
-	for(std::size_t i=0;i<_pollFds.size();++i)
+	std::map<int,std::size_t>::iterator it=_fdToIndex.find(fd);
+	if(it==_fdToIndex.end())
 	{
-		if(_pollFds[i].fd==fd)
-		{
-			if(enabled)
-			{
-				_pollFds[i].events=(short)(_pollFds[i].events|POLLOUT);
-			}
-			else
-			{
-				_pollFds[i].events=(short)(_pollFds[i].events&~POLLOUT);
-			}
-			break;
-		}
+		return;
+	}
+
+	std::size_t idx=it->second;
+
+	if(enabled)
+	{
+		_pollFds[idx].events=(short)(_pollFds[idx].events|POLLOUT);
+	}
+	else
+	{
+		_pollFds[idx].events=(short)(_pollFds[idx].events&~POLLOUT);
 	}
 }
 
 void EventLoop::setReadEnabled(int fd,bool enabled)
 {
-	for(std::size_t i=0;i<_pollFds.size();++i)
+	std::map<int,std::size_t>::iterator it=_fdToIndex.find(fd);
+	if(it==_fdToIndex.end())
 	{
-		if(_pollFds[i].fd==fd)
-		{
-			if(enabled)
-			{
-				_pollFds[i].events=(short)(_pollFds[i].events|POLLIN);
-			}
-			else
-			{
-				_pollFds[i].events=(short)(_pollFds[i].events&~POLLIN);
-			}
-			break;
-		}
+		return;
+	}
+
+	std::size_t idx=it->second;
+
+	if(enabled)
+	{
+		_pollFds[idx].events=(short)(_pollFds[idx].events|POLLIN);
+	}
+	else
+	{
+		_pollFds[idx].events=(short)(_pollFds[idx].events&~POLLIN);
 	}
 }
 
@@ -195,10 +213,13 @@ void EventLoop::compact()
 	std::vector<struct pollfd> tmp;
 	tmp.reserve(_pollFds.size());
 
+	_fdToIndex.clear();
+
 	for(std::size_t i=0;i<_pollFds.size();++i)
 	{
 		if(_pollFds[i].fd>=0)
 		{
+			_fdToIndex[_pollFds[i].fd]=tmp.size();
 			tmp.push_back(_pollFds[i]);
 		}
 	}

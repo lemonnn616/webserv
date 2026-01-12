@@ -84,33 +84,23 @@ static std::string extractHostFromHeadersBlock(const std::string& headersBlock)
 
 std::size_t CoreServer::selectServerIndexByHost(unsigned short port,std::size_t defaultIndex,const std::string& host) const
 {
-	std::size_t firstOnPort=defaultIndex;
-	bool firstSet=false;
-
-	for(std::size_t i=0;i<_serverConfigs.size();++i)
+	std::map<unsigned short,std::map<std::string,std::size_t> >::const_iterator itPort=_serverByPortHost.find(port);
+	if(itPort!=_serverByPortHost.end())
 	{
-		const ServerConfig& cfg=_serverConfigs[i];
-		if(cfg.listenPort!=port)
+		std::map<std::string,std::size_t>::const_iterator itHost=itPort->second.find(host);
+		if(itHost!=itPort->second.end())
 		{
-			continue;
-		}
-
-		if(!firstSet)
-		{
-			firstOnPort=i;
-			firstSet=true;
-		}
-
-		for(std::size_t j=0;j<cfg.serverNames.size();++j)
-		{
-			if(toLowerStr(cfg.serverNames[j])==host)
-			{
-				return i;
-			}
+			return itHost->second;
 		}
 	}
 
-	return firstSet ? firstOnPort : defaultIndex;
+	std::map<unsigned short,std::size_t>::const_iterator itDef=_defaultServerByPort.find(port);
+	if(itDef!=_defaultServerByPort.end())
+	{
+		return itDef->second;
+	}
+
+	return defaultIndex;
 }
 
 void CoreServer::updateServerIndexFromHost(Client& client)

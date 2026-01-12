@@ -289,3 +289,21 @@ void CoreServer::checkCgiTimeouts(EventLoop& loop)
 
 	reapChildren(loop);
 }
+
+void CoreServer::registerCgiProcess(EventLoop& loop,pid_t pid,int clientFd,int stdinFd,int stdoutFd,int stderrFd,const std::string& stdinData)
+{
+	registerCgiProcess(pid,clientFd,stdinFd,stdoutFd,stderrFd,stdinData);
+
+	if(stdinFd>=0)
+	{
+		loop.addFd(stdinFd,POLLOUT);
+	}
+	if(stdoutFd>=0)
+	{
+		loop.addFd(stdoutFd,POLLIN);
+	}
+	if(stderrFd>=0)
+	{
+		loop.addFd(stderrFd,POLLIN);
+	}
+}

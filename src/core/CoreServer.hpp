@@ -52,6 +52,8 @@ public:
 	static bool stopRequested();
 	void shutdown(EventLoop& loop);
 
+	void registerCgiProcess(EventLoop& loop,pid_t pid,int clientFd,int stdinFd,int stdoutFd,int stderrFd,const std::string& stdinData);
+
 private:
 	std::vector<ServerConfig> _serverConfigs;
 	std::string _configPath;
@@ -59,6 +61,9 @@ private:
 	std::vector<ListenConfig> _listenConfigs;
 	std::map<int,std::size_t> _listenFdToServerIndex;
 	std::map<int,unsigned short> _listenFdToPort;
+	std::map<unsigned short,std::size_t> _defaultServerByPort;
+	std::map<unsigned short,std::map<std::string,std::size_t> > _serverByPortHost;
+
 
 	std::map<int,Client> _clients;
 	std::map<pid_t,CgiProcess> _cgi;
