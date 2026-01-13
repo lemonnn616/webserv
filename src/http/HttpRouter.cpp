@@ -1,10 +1,11 @@
 #include "http/HttpRouter.hpp"
+#include "http/HttpError.hpp"
 #include "utils/FileUtils.hpp"
 #include "http/AutoIndex.hpp"
-#include "http/ErrorPage.hpp"
 
 #include <ctime>
 #include <cstdio>
+#include <string>
 
 // ---------- helpers ----------
 
@@ -38,7 +39,6 @@ static bool containsDotDot(const std::string& s)
 
 static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::string& path)
 {
-	// locations уже отсортированы по длине prefix (normalizeAll)
 	for (std::size_t i = 0; i < cfg.locations.size(); ++i)
 	{
 		const LocationConfig& loc = cfg.locations[i];
@@ -47,32 +47,19 @@ static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::s
 		if (pre == "/")
 			return &loc;
 
-		// path starts with prefix?
 		if (path.size() >= pre.size() && path.compare(0, pre.size(), pre) == 0)
 		{
-			// exact match
 			if (path.size() == pre.size())
 				return &loc;
 
-			// if prefix ends with '/', ok
 			if (!pre.empty() && pre[pre.size() - 1] == '/')
 				return &loc;
 
-			// boundary: next char must be '/'
 			if (path[pre.size()] == '/')
 				return &loc;
 		}
 	}
 	return 0;
-}
-
-static void fillErrorHtml(HttpResponse& res, int code, const std::string& reason)
-{
-	res.status = code;
-	res.reason = reason;
-	res.body = ErrorPage::defaultHtml(code, reason);
-	res.headers["Content-Type"] = "text/html";
-	res.headers["Content-Length"] = std::to_string(res.body.size());
 }
 
 // ---------- main router ----------
@@ -84,7 +71,12 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	const LocationConfig* loc = matchLocation(cfg, req.path);
 	if (!loc)
 	{
-		fillErrorHtml(res, 500, "Internal Server Error");
+		HttpError::fill(res, cfg, 500, "Internal Server Error");
+		if (req.method == "HEAD")
+		{
+			res.body = "";
+			res.headers["Content-Length"] = "0";
+		}
 		return res;
 	}
 
@@ -155,6 +147,16 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		{
 			relPath = "";
 		}
+
+		// IMPORTANT: if request is exactly "/uploads" or "/uploads/"
+		// we want to map to folder "uploads"
+		if (relPath.empty())
+		{
+			std::string pre = loc->prefix;   // "/uploads"
+			if (!pre.empty() && pre[0] == '/')
+				pre.erase(0, 1);            // "uploads"
+			relPath = pre;
+		}
 	}
 
 	std::string fsPath = FileUtils::join(baseRoot, relPath);
@@ -171,7 +173,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 		if (!FileUtils::writeFile(full, req.body))
 		{
-			fillErrorHtml(res, 500, "Internal Server Error");
+			HttpError::fill(res, cfg, 500, "Internal Server Error");
 			return res;
 		}
 
@@ -240,17 +242,27 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 				res.status = 200;
 				res.reason = "OK";
-				res.body = html;
 				res.headers["Content-Type"] = "text/html";
-				res.headers["Content-Length"] = std::to_string(res.body.size());
 
 				if (req.method == "HEAD")
+				{
 					res.body = "";
-
+					res.headers["Content-Length"] = "0";
+				}
+				else
+				{
+					res.body = html;
+					res.headers["Content-Length"] = std::to_string(res.body.size());
+				}
 				return res;
 			}
 
-			fillErrorHtml(res, 403, "Forbidden");
+			HttpError::fill(res, cfg, 403, "Forbidden");
+			if (req.method == "HEAD")
+			{
+				res.body = "";
+				res.headers["Content-Length"] = "0";
+			}
 			return res;
 		}
 	}
@@ -259,7 +271,12 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	std::string body;
 	if (!FileUtils::readFile(fsPath, body))
 	{
-		fillErrorHtml(res, 404, "Not Found");
+		HttpError::fill(res, cfg, 404, "Not Found");
+		if (req.method == "HEAD")
+		{
+			res.body = "";
+			res.headers["Content-Length"] = "0";
+		}
 		return res;
 	}
 
