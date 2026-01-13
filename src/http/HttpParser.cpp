@@ -8,7 +8,7 @@ static std::string trimLeft(const std::string& s)
 	return s;
 }
 
-bool HttpParser::parse(
+HttpParser::Result HttpParser::parse(
 	std::string& inBuffer,
 	HttpRequest& req,
 	std::size_t maxBodySize
@@ -16,14 +16,14 @@ bool HttpParser::parse(
 {
 	std::size_t headersEnd = inBuffer.find("\r\n\r\n");
 	if (headersEnd == std::string::npos)
-		return false;
+		return NEED_MORE;
 
 	std::string headersBlock = inBuffer.substr(0, headersEnd);
 	std::string rest = inBuffer.substr(headersEnd + 4);
 
 	std::size_t lineEnd = headersBlock.find("\r\n");
 	if (lineEnd == std::string::npos)
-		return false;
+		return BAD_REQUEST;
 
 	std::string requestLine = headersBlock.substr(0, lineEnd);
 	std::string headersPart = headersBlock.substr(lineEnd + 2);
@@ -31,7 +31,7 @@ bool HttpParser::parse(
 	std::size_t p1 = requestLine.find(' ');
 	std::size_t p2 = requestLine.find(' ', p1 + 1);
 	if (p1 == std::string::npos || p2 == std::string::npos)
-		return false;
+		return BAD_REQUEST;
 
 	req.method = requestLine.substr(0, p1);
 	req.path = requestLine.substr(p1 + 1, p2 - p1 - 1);
@@ -69,13 +69,13 @@ bool HttpParser::parse(
 		);
 
 	if (contentLength > maxBodySize)
-		return false;
+		return TOO_LARGE;
 
 	if (rest.size() < contentLength)
-		return false;
+		return NEED_MORE;
 
 	req.body = rest.substr(0, contentLength);
 	inBuffer.erase(0, headersEnd + 4 + contentLength);
 
-	return true;
+	return OK;
 }

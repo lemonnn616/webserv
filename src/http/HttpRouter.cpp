@@ -16,13 +16,13 @@ static std::string getContentType(const std::string& p)
 		return "application/octet-stream";
 
 	std::string ext = p.substr(dot + 1);
-	if (ext == "html") return "text/html";
-	if (ext == "css")  return "text/css";
-	if (ext == "js")   return "application/javascript";
-	if (ext == "png")  return "image/png";
-	if (ext == "jpg")  return "image/jpeg";
-	if (ext == "jpeg") return "image/jpeg";
-	if (ext == "gif")  return "image/gif";
+	if (ext == "html")	return "text/html";
+	if (ext == "css")	return "text/css";
+	if (ext == "js")	return "application/javascript";
+	if (ext == "png")	return "image/png";
+	if (ext == "jpg")	return "image/jpeg";
+	if (ext == "jpeg")	return "image/jpeg";
+	if (ext == "gif")	return "image/gif";
 	return "application/octet-stream";
 }
 
@@ -39,6 +39,7 @@ static bool containsDotDot(const std::string& s)
 
 static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::string& path)
 {
+	// locations already sorted by prefix length (normalizeAll)
 	for (std::size_t i = 0; i < cfg.locations.size(); ++i)
 	{
 		const LocationConfig& loc = cfg.locations[i];
@@ -62,6 +63,48 @@ static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::s
 	return 0;
 }
 
+// Build relPath relative to server root, taking location prefix into account.
+// Important fix: if request is exactly "/uploads" or "/uploads/", map to folder "uploads".
+static std::string buildRelPath(const LocationConfig* loc, const std::string& reqPath)
+{
+	std::string relPath;
+
+	if (!loc)
+		return relPath;
+
+	if (loc->prefix == "/")
+	{
+		if (reqPath.size() > 1)
+			relPath = reqPath.substr(1);
+		else
+			relPath = "";
+	}
+	else
+	{
+		if (reqPath.size() > loc->prefix.size())
+		{
+			relPath = reqPath.substr(loc->prefix.size());
+			if (!relPath.empty() && relPath[0] == '/')
+				relPath.erase(0, 1);
+		}
+		else
+		{
+			relPath = "";
+		}
+
+		// If requested exactly the location itself => map to that folder
+		if (relPath.empty())
+		{
+			std::string pre = loc->prefix; // "/uploads"
+			if (!pre.empty() && pre[0] == '/')
+				pre.erase(0, 1);           // "uploads"
+			relPath = pre;
+		}
+	}
+
+	return relPath;
+}
+
 // ---------- main router ----------
 
 HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
@@ -73,10 +116,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	{
 		HttpError::fill(res, cfg, 500, "Internal Server Error");
 		if (req.method == "HEAD")
-		{
 			res.body = "";
-			res.headers["Content-Length"] = "0";
-		}
 		return res;
 	}
 
@@ -99,6 +139,12 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.body = "Method Not Allowed\n";
 		res.headers["Content-Type"] = "text/plain";
 		res.headers["Content-Length"] = std::to_string(res.body.size());
+
+		// if you already add Allow in other layer — ok.
+		// If not, you can add it here, but you said Allow is already present in output.
+
+		if (req.method == "HEAD")
+			res.body = "";
 		return res;
 	}
 
@@ -126,39 +172,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	if (!loc->index.empty())
 		indexName = loc->index;
 
-	std::string relPath;
-
-	if (loc->prefix == "/")
-	{
-		if (req.path.size() > 1)
-			relPath = req.path.substr(1);
-		else
-			relPath = "";
-	}
-	else
-	{
-		if (req.path.size() > loc->prefix.size())
-		{
-			relPath = req.path.substr(loc->prefix.size());
-			if (!relPath.empty() && relPath[0] == '/')
-				relPath.erase(0, 1);
-		}
-		else
-		{
-			relPath = "";
-		}
-
-		// IMPORTANT: if request is exactly "/uploads" or "/uploads/"
-		// we want to map to folder "uploads"
-		if (relPath.empty())
-		{
-			std::string pre = loc->prefix;   // "/uploads"
-			if (!pre.empty() && pre[0] == '/')
-				pre.erase(0, 1);            // "uploads"
-			relPath = pre;
-		}
-	}
-
+	std::string relPath = buildRelPath(loc, req.path);
 	std::string fsPath = FileUtils::join(baseRoot, relPath);
 
 	// ----- POST: upload body to uploadDir -----
@@ -174,6 +188,8 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		if (!FileUtils::writeFile(full, req.body))
 		{
 			HttpError::fill(res, cfg, 500, "Internal Server Error");
+			if (req.method == "HEAD")
+				res.body = "";
 			return res;
 		}
 
@@ -182,6 +198,9 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.body = "Uploaded: " + name + "\n";
 		res.headers["Content-Type"] = "text/plain";
 		res.headers["Content-Length"] = std::to_string(res.body.size());
+
+		// POST has body; but if someone sends HEAD (not typical), still safe:
+		// (no special handling)
 		return res;
 	}
 
@@ -210,6 +229,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 		if (::remove(fsPath.c_str()) != 0)
 		{
+			// For delete 404: could be html, but text is ok for minimal version.
 			res.status = 404;
 			res.reason = "Not Found";
 			res.body = "Not Found\n";
@@ -243,26 +263,20 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 				res.status = 200;
 				res.reason = "OK";
 				res.headers["Content-Type"] = "text/html";
+				res.headers["Content-Length"] = std::to_string(html.size());
 
+				// IMPORTANT: HEAD => no body, but same Content-Length as GET
 				if (req.method == "HEAD")
-				{
 					res.body = "";
-					res.headers["Content-Length"] = "0";
-				}
 				else
-				{
 					res.body = html;
-					res.headers["Content-Length"] = std::to_string(res.body.size());
-				}
+
 				return res;
 			}
 
 			HttpError::fill(res, cfg, 403, "Forbidden");
 			if (req.method == "HEAD")
-			{
 				res.body = "";
-				res.headers["Content-Length"] = "0";
-			}
 			return res;
 		}
 	}
@@ -272,11 +286,9 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	if (!FileUtils::readFile(fsPath, body))
 	{
 		HttpError::fill(res, cfg, 404, "Not Found");
+		// IMPORTANT: HEAD => no body, but keep Content-Length from the error page
 		if (req.method == "HEAD")
-		{
 			res.body = "";
-			res.headers["Content-Length"] = "0";
-		}
 		return res;
 	}
 

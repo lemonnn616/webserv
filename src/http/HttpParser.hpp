@@ -6,7 +6,15 @@
 class HttpParser
 {
 public:
-	static bool parse
+	enum Result
+	{
+		NEED_MORE = 0,
+		OK = 1,
+		BAD_REQUEST = -1,
+		TOO_LARGE = -2
+	};
+
+	static Result parse
 	(
 		std::string& inBuffer,
 		HttpRequest& out,

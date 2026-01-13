@@ -26,7 +26,8 @@ SRC_http := \
 	HttpRouter.cpp \
 	HttpResponse.cpp \
 	AutoIndex.cpp \
-	ErrorPage.cpp
+	ErrorPage.cpp	\
+	HttpError.cpp
 
 SRC_utils := FileUtils.cpp
 

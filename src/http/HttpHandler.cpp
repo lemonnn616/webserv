@@ -1,6 +1,7 @@
 #include "http/HttpHandler.hpp"
 #include "http/HttpParser.hpp"
 #include "http/HttpRouter.hpp"
+#include "http/HttpError.hpp"
 
 HttpHandler::~HttpHandler() {}
 
@@ -11,7 +12,7 @@ HttpHandler::HttpHandler()
 
 void HttpHandler::setServerConfigs(const std::vector<ServerConfig>* cfgs)
 {
-	_cfgs=cfgs;
+	_cfgs = cfgs;
 }
 
 void HttpHandler::onDataReceived(
@@ -27,18 +28,38 @@ void HttpHandler::onDataReceived(
 		return;
 
 	const ServerConfig* cfg;
-
 	if (serverConfigIndex < _cfgs->size())
 		cfg = &(*_cfgs)[serverConfigIndex];
 	else
 		cfg = &(*_cfgs)[0];
 
 	HttpRequest req;
-	if (!HttpParser::parse(inBuffer, req, cfg->clientMaxBodySize))
+	HttpParser::Result r = HttpParser::parse(inBuffer, req, cfg->clientMaxBodySize);
+	if (r == HttpParser::NEED_MORE)
 		return;
 
-	HttpResponse res = HttpRouter::route(req, *cfg);
+	HttpResponse res;
+
+	if (r == HttpParser::BAD_REQUEST)
+	{
+		HttpError::fill(res, *cfg, 400, "Bad Request");
+		res.headers["Connection"] = "close";
+		outBuffer = res.serialize();
+		state = ConnectionState::WRITING;
+		return;
+	}
+
+	if (r == HttpParser::TOO_LARGE)
+	{
+		HttpError::fill(res, *cfg, 413, "Payload Too Large");
+		res.headers["Connection"] = "close";
+		outBuffer = res.serialize();
+		state = ConnectionState::WRITING;
+		return;
+	}
+
+	// OK
+	res = HttpRouter::route(req, *cfg);
 	outBuffer = res.serialize();
 	state = ConnectionState::WRITING;
 }
-
