@@ -45,7 +45,7 @@ namespace FileUtils
 		}
 		return false;
 	}
-
+ 
 	std::string join(const std::string& a, const std::string& b)
 	{
 		if (a.empty())
