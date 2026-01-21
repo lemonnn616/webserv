@@ -35,8 +35,12 @@ void HttpHandler::onDataReceived(
 
 	HttpRequest req;
 	HttpParser::Result r = HttpParser::parse(inBuffer, req, cfg->clientMaxBodySize);
+
 	if (r == HttpParser::NEED_MORE)
+	{
+		state = ConnectionState::READING;
 		return;
+	}
 
 	HttpResponse res;
 
@@ -44,6 +48,7 @@ void HttpHandler::onDataReceived(
 	{
 		HttpError::fill(res, *cfg, 400, "Bad Request");
 		res.headers["Connection"] = "close";
+		// req может быть невалидным — не трогаем res.version (пусть будет HTTP/1.1 по умолчанию)
 		outBuffer = res.serialize();
 		state = ConnectionState::WRITING;
 		return;
@@ -53,13 +58,22 @@ void HttpHandler::onDataReceived(
 	{
 		HttpError::fill(res, *cfg, 413, "Payload Too Large");
 		res.headers["Connection"] = "close";
+		// req может быть невалидным — не трогаем res.version
 		outBuffer = res.serialize();
 		state = ConnectionState::WRITING;
 		return;
 	}
 
-	// OK
+	// OK: теперь req валиден => можно вернуть ту же версию
 	res = HttpRouter::route(req, *cfg);
+	res = HttpRouter::route(req, *cfg);
+
+	// всегда закрываем соединение — упрощает Core и nc/curl
+	res.headers["Connection"] = "close";
+
+	// версия известна, т.к. parse == OK
+	res.version = req.version;
+
 	outBuffer = res.serialize();
 	state = ConnectionState::WRITING;
 }

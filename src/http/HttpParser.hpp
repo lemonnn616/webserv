@@ -2,6 +2,7 @@
 
 #include <string>
 #include "http/HttpRequest.hpp"
+#include <cstddef>
 
 class HttpParser
 {

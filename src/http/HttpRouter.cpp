@@ -6,8 +6,57 @@
 #include <ctime>
 #include <cstdio>
 #include <string>
+#include <cctype>
 
 // ---------- helpers ----------
+
+static std::string toLowerStr(const std::string& s)
+{
+	std::string r = s;
+	for (std::size_t i = 0; i < r.size(); ++i)
+		r[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(r[i])));
+	return r;
+}
+
+static void applyConnectionPolicy(const HttpRequest& req, HttpResponse& res)
+{
+	// headers in req are stored lowercase (by your parser), so "connection" is lowercase
+	std::string raw = "";
+	std::map<std::string, std::string>::const_iterator it = req.headers.find("connection");
+	if (it != req.headers.end())
+		raw = it->second;
+
+	std::string c = toLowerStr(raw);
+
+	if (req.version == "HTTP/1.0")
+	{
+		// HTTP/1.0 default: close
+		if (c.find("keep-alive") != std::string::npos)
+			res.headers["Connection"] = "keep-alive";
+		else
+			res.headers["Connection"] = "close";
+	}
+	else
+	{
+		// HTTP/1.1 default: keep-alive
+		if (c.find("close") != std::string::npos)
+			res.headers["Connection"] = "close";
+		else
+			res.headers["Connection"] = "keep-alive";
+	}
+}
+
+static std::string buildAllowHeader(const LocationConfig& loc)
+{
+	std::string allow;
+
+	if (loc.allowGet)    { if (!allow.empty()) allow += ", "; allow += "GET"; }
+	if (loc.allowHead)   { if (!allow.empty()) allow += ", "; allow += "HEAD"; }
+	if (loc.allowPost)   { if (!allow.empty()) allow += ", "; allow += "POST"; }
+	if (loc.allowDelete) { if (!allow.empty()) allow += ", "; allow += "DELETE"; }
+
+	return allow;
+}
 
 static std::string getContentType(const std::string& p)
 {
@@ -30,11 +79,6 @@ static std::string makeUploadFileName()
 {
 	std::time_t t = std::time(0);
 	return "upload_" + std::to_string((long long)t) + ".bin";
-}
-
-static bool containsDotDot(const std::string& s)
-{
-	return (s.find("..") != std::string::npos);
 }
 
 static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::string& path)
@@ -111,12 +155,14 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 {
 	HttpResponse res;
 
+	res.version = req.version;
 	const LocationConfig* loc = matchLocation(cfg, req.path);
 	if (!loc)
 	{
 		HttpError::fill(res, cfg, 500, "Internal Server Error");
 		if (req.method == "HEAD")
 			res.body = "";
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
@@ -139,12 +185,12 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.body = "Method Not Allowed\n";
 		res.headers["Content-Type"] = "text/plain";
 		res.headers["Content-Length"] = std::to_string(res.body.size());
-
-		// if you already add Allow in other layer — ok.
-		// If not, you can add it here, but you said Allow is already present in output.
+		res.headers["Allow"] = buildAllowHeader(*loc);
 
 		if (req.method == "HEAD")
 			res.body = "";
+
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
@@ -160,6 +206,8 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.headers["Location"] = loc->returnUrl;
 		res.body = "";
 		res.headers["Content-Length"] = "0";
+
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
@@ -190,6 +238,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 			HttpError::fill(res, cfg, 500, "Internal Server Error");
 			if (req.method == "HEAD")
 				res.body = "";
+			applyConnectionPolicy(req, res);
 			return res;
 		}
 
@@ -199,24 +248,13 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.headers["Content-Type"] = "text/plain";
 		res.headers["Content-Length"] = std::to_string(res.body.size());
 
-		// POST has body; but if someone sends HEAD (not typical), still safe:
-		// (no special handling)
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
 	// ----- DELETE: delete file by fsPath -----
 	if (req.method == "DELETE")
 	{
-		if (containsDotDot(req.path))
-		{
-			res.status = 400;
-			res.reason = "Bad Request";
-			res.body = "Bad path\n";
-			res.headers["Content-Type"] = "text/plain";
-			res.headers["Content-Length"] = std::to_string(res.body.size());
-			return res;
-		}
-
 		if (FileUtils::isDirectory(fsPath))
 		{
 			res.status = 403;
@@ -224,17 +262,20 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 			res.body = "Cannot delete directory\n";
 			res.headers["Content-Type"] = "text/plain";
 			res.headers["Content-Length"] = std::to_string(res.body.size());
+
+			applyConnectionPolicy(req, res);
 			return res;
 		}
 
 		if (::remove(fsPath.c_str()) != 0)
 		{
-			// For delete 404: could be html, but text is ok for minimal version.
 			res.status = 404;
 			res.reason = "Not Found";
 			res.body = "Not Found\n";
 			res.headers["Content-Type"] = "text/plain";
 			res.headers["Content-Length"] = std::to_string(res.body.size());
+
+			applyConnectionPolicy(req, res);
 			return res;
 		}
 
@@ -242,6 +283,8 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.reason = "No Content";
 		res.body = "";
 		res.headers["Content-Length"] = "0";
+
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
@@ -271,12 +314,15 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 				else
 					res.body = html;
 
+				applyConnectionPolicy(req, res);
 				return res;
 			}
 
 			HttpError::fill(res, cfg, 403, "Forbidden");
 			if (req.method == "HEAD")
 				res.body = "";
+
+			applyConnectionPolicy(req, res);
 			return res;
 		}
 	}
@@ -289,6 +335,8 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		// IMPORTANT: HEAD => no body, but keep Content-Length from the error page
 		if (req.method == "HEAD")
 			res.body = "";
+
+		applyConnectionPolicy(req, res);
 		return res;
 	}
 
@@ -302,5 +350,6 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	else
 		res.body = "";
 
+	applyConnectionPolicy(req, res);
 	return res;
 }
