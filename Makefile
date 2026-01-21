@@ -1,14 +1,17 @@
 NAME := webserv
 
-MODULES := main core http utils config
+MODULES := main core http utils config cgi
 
 DIR_main := src
 DIR_core := src/core
 DIR_http := src/http
 DIR_utils := src/utils
+DIR_cgi := src/cgi
 DIR_config := config
 
 SRC_main := main.cpp
+
+SRC_cgi := CgiRunner.cpp \
 
 SRC_core := \
 	CoreServer.cpp \

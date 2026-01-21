@@ -2,11 +2,13 @@
 #include "http/HttpError.hpp"
 #include "utils/FileUtils.hpp"
 #include "http/AutoIndex.hpp"
+#include "cgi/CgiRunner.hpp"
 
 #include <ctime>
 #include <cstdio>
 #include <string>
 #include <cctype>
+#include <cstdlib>
 
 // ---------- helpers ----------
 
@@ -20,7 +22,6 @@ static std::string toLowerStr(const std::string& s)
 
 static void applyConnectionPolicy(const HttpRequest& req, HttpResponse& res)
 {
-	// headers in req are stored lowercase (by your parser), so "connection" is lowercase
 	std::string raw = "";
 	std::map<std::string, std::string>::const_iterator it = req.headers.find("connection");
 	if (it != req.headers.end())
@@ -30,7 +31,6 @@ static void applyConnectionPolicy(const HttpRequest& req, HttpResponse& res)
 
 	if (req.version == "HTTP/1.0")
 	{
-		// HTTP/1.0 default: close
 		if (c.find("keep-alive") != std::string::npos)
 			res.headers["Connection"] = "keep-alive";
 		else
@@ -38,7 +38,6 @@ static void applyConnectionPolicy(const HttpRequest& req, HttpResponse& res)
 	}
 	else
 	{
-		// HTTP/1.1 default: keep-alive
 		if (c.find("close") != std::string::npos)
 			res.headers["Connection"] = "close";
 		else
@@ -58,7 +57,15 @@ static std::string buildAllowHeader(const LocationConfig& loc)
 	return allow;
 }
 
-static std::string getContentType(const std::string& p)
+static std::string getExtWithDot(const std::string& p)
+{
+	std::size_t dot = p.rfind('.');
+	if (dot == std::string::npos)
+		return "";
+	return p.substr(dot); // ".py"
+}
+
+static std::string getContentTypeByPath(const std::string& p)
 {
 	std::size_t dot = p.rfind('.');
 	if (dot == std::string::npos)
@@ -72,6 +79,7 @@ static std::string getContentType(const std::string& p)
 	if (ext == "jpg")	return "image/jpeg";
 	if (ext == "jpeg")	return "image/jpeg";
 	if (ext == "gif")	return "image/gif";
+	if (ext == "txt")	return "text/plain";
 	return "application/octet-stream";
 }
 
@@ -83,7 +91,6 @@ static std::string makeUploadFileName()
 
 static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::string& path)
 {
-	// locations already sorted by prefix length (normalizeAll)
 	for (std::size_t i = 0; i < cfg.locations.size(); ++i)
 	{
 		const LocationConfig& loc = cfg.locations[i];
@@ -107,46 +114,151 @@ static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::s
 	return 0;
 }
 
-// Build relPath relative to server root, taking location prefix into account.
-// Important fix: if request is exactly "/uploads" or "/uploads/", map to folder "uploads".
 static std::string buildRelPath(const LocationConfig* loc, const std::string& reqPath)
 {
-	std::string relPath;
+	std::string rel;
 
 	if (!loc)
-		return relPath;
+		return rel;
 
+	// root location: "/a/b" -> "a/b"
 	if (loc->prefix == "/")
 	{
 		if (reqPath.size() > 1)
-			relPath = reqPath.substr(1);
-		else
-			relPath = "";
+			return reqPath.substr(1);
+		return "";
+	}
+
+	// normalize prefix folder name: "/cgi-bin" -> "cgi-bin"
+	std::string prefixFolder = loc->prefix;
+	if (!prefixFolder.empty() && prefixFolder[0] == '/')
+		prefixFolder.erase(0, 1);
+
+	// remainder after location prefix
+	std::string rest;
+	if (reqPath.size() > loc->prefix.size())
+	{
+		rest = reqPath.substr(loc->prefix.size()); // starts with "/hello.py"
+		if (!rest.empty() && rest[0] == '/')
+			rest.erase(0, 1); // "hello.py"
 	}
 	else
 	{
-		if (reqPath.size() > loc->prefix.size())
+		rest = "";
+	}
+
+	// If loc.root is set, assume it already points to directory for this location
+	// => use only remainder
+	if (!loc->root.empty())
+		return rest;
+
+	// Default: location maps to folder under server root
+	// => "cgi-bin" + "/" + "hello.py"
+	if (rest.empty())
+		return prefixFolder;
+
+	return prefixFolder + "/" + rest;
+}
+
+// --- CGI stdout parsing ---
+// CGI typically outputs:
+//   Status: 200 OK\r\n (optional)
+//   Header: value\r\n
+//   \r\n
+//   body...
+static bool parseCgiOutput(const std::string& out, HttpResponse& res)
+{
+	std::size_t sep = out.find("\r\n\r\n");
+	if (sep == std::string::npos)
+	{
+		// allow LF-only (some scripts do \n)
+		sep = out.find("\n\n");
+		if (sep == std::string::npos)
+			return false;
+	}
+
+	std::string head = out.substr(0, sep);
+	std::string body;
+	if (out.size() > sep)
+	{
+		// if \r\n\r\n -> +4, if \n\n -> +2
+		if (out.compare(sep, 4, "\r\n\r\n") == 0)
+			body = out.substr(sep + 4);
+		else
+			body = out.substr(sep + 2);
+	}
+
+	// defaults
+	res.status = 200;
+	res.reason = "OK";
+	res.body = body;
+
+	// split lines
+	std::size_t pos = 0;
+	while (pos < head.size())
+	{
+		std::size_t eol = head.find("\n", pos);
+		std::string line;
+		if (eol == std::string::npos)
 		{
-			relPath = reqPath.substr(loc->prefix.size());
-			if (!relPath.empty() && relPath[0] == '/')
-				relPath.erase(0, 1);
+			line = head.substr(pos);
+			pos = head.size();
 		}
 		else
 		{
-			relPath = "";
+			line = head.substr(pos, eol - pos);
+			pos = eol + 1;
 		}
 
-		// If requested exactly the location itself => map to that folder
-		if (relPath.empty())
+		// trim trailing '\r'
+		if (!line.empty() && line[line.size() - 1] == '\r')
+			line.erase(line.size() - 1);
+
+		if (line.empty())
+			continue;
+
+		std::size_t colon = line.find(':');
+		if (colon == std::string::npos)
+			continue;
+
+		std::string key = line.substr(0, colon);
+		std::string val = line.substr(colon + 1);
+
+		// ltrim spaces
+		while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
+			val.erase(0, 1);
+
+		std::string keyLower = toLowerStr(key);
+
+		if (keyLower == "status")
 		{
-			std::string pre = loc->prefix; // "/uploads"
-			if (!pre.empty() && pre[0] == '/')
-				pre.erase(0, 1);           // "uploads"
-			relPath = pre;
+			// "200 OK"
+			int code = std::atoi(val.c_str());
+			if (code > 0)
+				res.status = code;
+
+			std::size_t sp = val.find(' ');
+			if (sp != std::string::npos && sp + 1 < val.size())
+				res.reason = val.substr(sp + 1);
+			else
+				res.reason = "OK";
+		}
+		else
+		{
+			// CGI headers -> HTTP headers
+			res.headers[key] = val;
 		}
 	}
 
-	return relPath;
+	// Content-Length: if not provided, set from body
+	if (res.headers.find("Content-Length") == res.headers.end())
+		res.headers["Content-Length"] = std::to_string(res.body.size());
+
+	// If no Content-Type, assume text/plain
+	if (res.headers.find("Content-Type") == res.headers.end())
+		res.headers["Content-Type"] = "text/plain";
+
+	return true;
 }
 
 // ---------- main router ----------
@@ -154,8 +266,8 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 {
 	HttpResponse res;
-
 	res.version = req.version;
+
 	const LocationConfig* loc = matchLocation(cfg, req.path);
 	if (!loc)
 	{
@@ -168,15 +280,10 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 	// ----- method allowed? -----
 	bool methodAllowed = false;
-
-	if (req.method == "GET" && loc->allowGet)
-		methodAllowed = true;
-	else if (req.method == "HEAD" && loc->allowHead)
-		methodAllowed = true;
-	else if (req.method == "POST" && loc->allowPost)
-		methodAllowed = true;
-	else if (req.method == "DELETE" && loc->allowDelete)
-		methodAllowed = true;
+	if (req.method == "GET" && loc->allowGet) methodAllowed = true;
+	else if (req.method == "HEAD" && loc->allowHead) methodAllowed = true;
+	else if (req.method == "POST" && loc->allowPost) methodAllowed = true;
+	else if (req.method == "DELETE" && loc->allowDelete) methodAllowed = true;
 
 	if (!methodAllowed)
 	{
@@ -198,8 +305,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	if (loc->hasReturn)
 	{
 		int code = loc->returnCode;
-		if (code <= 0)
-			code = 302;
+		if (code <= 0) code = 302;
 
 		res.status = code;
 		res.reason = "Found";
@@ -222,6 +328,55 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 	std::string relPath = buildRelPath(loc, req.path);
 	std::string fsPath = FileUtils::join(baseRoot, relPath);
+
+	// =========================
+	// CGI (by extension in cfg.cgi)
+	// =========================
+	{
+		std::string ext = getExtWithDot(fsPath); // ".py"
+		std::map<std::string, std::string>::const_iterator it = cfg.cgi.find(ext);
+		if (!ext.empty() && it != cfg.cgi.end())
+		{
+			// must exist and not be directory
+			if (!FileUtils::exists(fsPath) || FileUtils::isDirectory(fsPath))
+			{
+				HttpError::fill(res, cfg, 404, "Not Found");
+				if (req.method == "HEAD")
+					res.body = "";
+				applyConnectionPolicy(req, res);
+				return res;
+			}
+
+			CgiRunner::Result cg;
+			std::map<std::string, std::string> extra; // later you can add SCRIPT_ROOT etc.
+
+			bool ok = CgiRunner::run(it->second, fsPath, req, extra, cg);
+			if (!ok || cg.stdoutData.empty())
+			{
+				// if stderr not empty -> helpful for debug
+				HttpError::fill(res, cfg, 502, "Bad Gateway");
+				applyConnectionPolicy(req, res);
+				return res;
+			}
+
+			HttpResponse cgiRes;
+			cgiRes.version = req.version;
+
+			if (!parseCgiOutput(cg.stdoutData, cgiRes))
+			{
+				HttpError::fill(res, cfg, 502, "Bad Gateway");
+				applyConnectionPolicy(req, res);
+				return res;
+			}
+
+			// HEAD: same headers, empty body
+			if (req.method == "HEAD")
+				cgiRes.body = "";
+
+			applyConnectionPolicy(req, cgiRes);
+			return cgiRes;
+		}
+	}
 
 	// ----- POST: upload body to uploadDir -----
 	if (req.method == "POST")
@@ -294,9 +449,7 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		std::string idx = FileUtils::join(fsPath, indexName);
 
 		if (FileUtils::exists(idx))
-		{
 			fsPath = idx;
-		}
 		else
 		{
 			if (loc->autoindex)
@@ -308,7 +461,6 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 				res.headers["Content-Type"] = "text/html";
 				res.headers["Content-Length"] = std::to_string(html.size());
 
-				// IMPORTANT: HEAD => no body, but same Content-Length as GET
 				if (req.method == "HEAD")
 					res.body = "";
 				else
@@ -321,7 +473,6 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 			HttpError::fill(res, cfg, 403, "Forbidden");
 			if (req.method == "HEAD")
 				res.body = "";
-
 			applyConnectionPolicy(req, res);
 			return res;
 		}
@@ -332,17 +483,15 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	if (!FileUtils::readFile(fsPath, body))
 	{
 		HttpError::fill(res, cfg, 404, "Not Found");
-		// IMPORTANT: HEAD => no body, but keep Content-Length from the error page
 		if (req.method == "HEAD")
 			res.body = "";
-
 		applyConnectionPolicy(req, res);
 		return res;
 	}
 
 	res.status = 200;
 	res.reason = "OK";
-	res.headers["Content-Type"] = getContentType(fsPath);
+	res.headers["Content-Type"] = getContentTypeByPath(fsPath);
 	res.headers["Content-Length"] = std::to_string(body.size());
 
 	if (req.method == "GET")
