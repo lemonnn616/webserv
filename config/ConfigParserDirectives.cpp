@@ -183,8 +183,7 @@ bool ConfigParser::applyLocationDirective(ServerConfig& srv,LocationConfig& loc,
 		if(args.empty())
 			return false;
 
-		setAllowed(loc,args);
-		return true;
+		return setAllowed(loc, args);
 	}
 
 	if(key=="return"||key=="redirect")
@@ -251,60 +250,68 @@ bool ConfigParser::isNumber(const std::string& s)
 	return true;
 }
 
-void ConfigParser::setAllowed(LocationConfig& loc,const std::vector<std::string>& args)
+bool ConfigParser::setAllowed(LocationConfig& loc, const std::vector<std::string>& args)
 {
-	loc.allowGet=false;
-	loc.allowHead=false;
-	loc.allowPost=false;
-	loc.allowDelete=false;
+	loc.allowGet = false;
+	loc.allowHead = false;
+	loc.allowPost = false;
+	loc.allowDelete = false;
 
-	for(std::size_t i=0;i<args.size();++i)
+	for (std::size_t i = 0; i < args.size(); ++i)
 	{
-		const std::string& m=args[i];
+		const std::string& m = args[i];
 
-		if(m=="ALL")
+		if (m == "ALL")
 		{
-			loc.allowGet=true;
-			loc.allowHead=true;
-			loc.allowPost=true;
-			loc.allowDelete=true;
+			loc.allowGet = true;
+			loc.allowHead = true;
+			loc.allowPost = true;
+			loc.allowDelete = true;
 			continue;
 		}
-		if(m=="GET")
-		{
-			loc.allowGet=true;
-			continue;
-		}
-		if(m=="HEAD")
-		{
-			loc.allowHead=true;
-			continue;
-		}
-		if(m=="POST")
-		{
-			loc.allowPost=true;
-			continue;
-		}
-		if(m=="DELETE")
-		{
-			loc.allowDelete=true;
-			continue;
-		}
+		else if (m == "GET")    loc.allowGet = true;
+		else if (m == "HEAD")   loc.allowHead = true;
+		else if (m == "POST")   loc.allowPost = true;
+		else if (m == "DELETE") loc.allowDelete = true;
+		else
+			return false; // неизвестный метод => ошибка конфига
 	}
+	return true;
 }
 
-LocationConfig* ConfigParser::getOrCreateLocation(ServerConfig& srv,const std::string& prefix)
+
+static std::string normalizePrefix(const std::string& in)
 {
-	for(std::size_t i=0;i<srv.locations.size();++i)
+	std::string p = in;
+
+	// must start with '/'
+	if (p.empty() || p[0] != '/')
+		return p;
+
+	// remove trailing slashes except root "/"
+	while (p.size() > 1 && p[p.size() - 1] == '/')
+		p.erase(p.size() - 1);
+
+	return p;
+}
+
+LocationConfig* ConfigParser::getOrCreateLocation(ServerConfig& srv, const std::string& prefix)
+{
+	std::string norm = normalizePrefix(prefix);
+
+	for (std::size_t i = 0; i < srv.locations.size(); ++i)
 	{
-		if(srv.locations[i].prefix==prefix)
+		// also compare normalized stored prefix (just in case)
+		if (normalizePrefix(srv.locations[i].prefix) == norm)
 		{
+			srv.locations[i].prefix = norm;
 			return &srv.locations[i];
 		}
 	}
 
 	LocationConfig loc;
-	loc.prefix=prefix;
+	loc.prefix = norm;
 	srv.locations.push_back(loc);
-	return &srv.locations[srv.locations.size()-1];
+	return &srv.locations[srv.locations.size() - 1];
 }
+

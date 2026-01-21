@@ -38,7 +38,7 @@ private:
 	static unsigned short parsePort(const std::string& s);
 	static bool isNumber(const std::string& s);
 
-	static void setAllowed(LocationConfig& loc,const std::vector<std::string>& args);
+	static bool setAllowed(LocationConfig& loc,const std::vector<std::string>& args);
 	static LocationConfig* getOrCreateLocation(ServerConfig& srv,const std::string& prefix);
 
 	bool normalizeAll(std::vector<ServerConfig>& out);
