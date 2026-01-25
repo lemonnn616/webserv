@@ -2,6 +2,10 @@
 #include "core/EventLoop.hpp"
 #include "core/Logger.hpp"
 #include "http/IHttpHandler.hpp"
+#include "cgi/CgiRunner.hpp"
+#include "http/CgiResponseParser.hpp"
+#include "http/HttpError.hpp"
+#include "http/HttpResponse.hpp"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -11,6 +15,7 @@
 #include <vector>
 #include <cctype>
 #include <limits>
+#include <cstdlib>
 
 static const std::size_t MAX_HEADER_BYTES=64*1024;
 
@@ -127,6 +132,65 @@ static bool extractContentLength(const std::string& headersBlock,std::size_t& ou
 
 	return false;
 }
+
+static bool parseCgiStateData(
+	const std::string& s,
+	pid_t& pid,
+	int& stdinFd,
+	int& stdoutFd,
+	int& stderrFd,
+	std::string& method,
+	std::string& version,
+	std::string& body
+)
+{
+	if(s.size()<4)
+		return false;
+	if(s.compare(0,4,"CGI|")!=0)
+		return false;
+
+	std::size_t p0=4;
+	std::size_t p1=s.find('|',p0);
+	if(p1==std::string::npos) return false;
+	std::size_t p2=s.find('|',p1+1);
+	if(p2==std::string::npos) return false;
+	std::size_t p3=s.find('|',p2+1);
+	if(p3==std::string::npos) return false;
+	std::size_t p4=s.find('|',p3+1);
+	if(p4==std::string::npos) return false;
+	std::size_t p5=s.find('|',p4+1);
+	if(p5==std::string::npos) return false;
+	std::size_t p6=s.find('|',p5+1);
+	if(p6==std::string::npos) return false;
+
+	std::size_t nl=s.find('\n',p6+1);
+	if(nl==std::string::npos) return false;
+
+	long long pidll=std::atoll(s.substr(p0,p1-p0).c_str());
+	pid=(pid_t)pidll;
+
+	stdinFd=std::atoi(s.substr(p1+1,p2-(p1+1)).c_str());
+	stdoutFd=std::atoi(s.substr(p2+1,p3-(p2+1)).c_str());
+	stderrFd=std::atoi(s.substr(p3+1,p4-(p3+1)).c_str());
+
+	method=s.substr(p4+1,p5-(p4+1));
+	version=s.substr(p5+1,p6-(p5+1));
+
+	std::size_t lenPos=p6+1;
+	std::size_t lenEnd=nl;
+
+	std::size_t blen=0;
+	if(!parseSizeTStrict(s.substr(lenPos,lenEnd-lenPos),blen))
+		return false;
+
+	std::size_t bodyPos=nl+1;
+	if(s.size()<bodyPos+blen)
+		return false;
+
+	body=s.substr(bodyPos,blen);
+	return true;
+}
+
 
 void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 {
@@ -306,6 +370,46 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 			client.serverConfigIndex,
 			client.sessionId
 		);
+		if(client.state==ConnectionState::CGI_PENDING)
+		{
+			pid_t pid=-1;
+			int stdinFd=-1;
+			int stdoutFd=-1;
+			int stderrFd=-1;
+			std::string method;
+			std::string version;
+			std::string body;
+
+			if(!parseCgiStateData(client.sessionId,pid,stdinFd,stdoutFd,stderrFd,method,version,body))
+			{
+				failClose(loop,fd,client,502,"Bad Gateway","Bad Gateway\n");
+				return;
+			}
+
+			// Регистрируем CGI в poll.
+			// ВАЖНО: у тебя сейчас registerCgiProcess(loop, ...) принимает 7 аргументов
+			// (pid, clientFd, stdinFd, stdoutFd, stderrFd, stdinData)
+			// поэтому передаём body как stdinData.
+			registerCgiProcess(loop,pid,fd,stdinFd,stdoutFd,stderrFd,body);
+			std::map<pid_t, CgiProcess>::iterator itp = _cgi.find(pid);
+			if (itp != _cgi.end())
+			{
+				itp->second.method = method;
+				itp->second.version = version;
+			}
+
+			// Клиент ждёт CGI: не читаем клиента, не пишем клиенту
+			loop.setReadEnabled(fd,false);
+			loop.setWriteEnabled(fd,false);
+
+			// Можно очистить вход, чтобы не держать память
+			std::string().swap(client.inBuffer);
+
+			// sessionId больше не нужен
+			std::string().swap(client.sessionId);
+
+			return;
+		}
 
 		if(client.state==ConnectionState::CLOSING)
 		{

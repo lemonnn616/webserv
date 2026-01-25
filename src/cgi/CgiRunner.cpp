@@ -9,6 +9,8 @@
 #include <vector>
 #include <cctype>
 
+// ---------------- helpers ----------------
+
 static void closeIfValid(int& fd)
 {
 	if (fd >= 0)
@@ -31,8 +33,10 @@ static std::string stripSpaces(const std::string& s)
 	return s.substr(i, j - i);
 }
 
-static std::string getHeaderValueLowerKey(const std::map<std::string, std::string>& headers,
-										 const std::string& lowerKey)
+static std::string getHeaderValueLowerKey(
+	const std::map<std::string, std::string>& headers,
+	const std::string& lowerKey
+)
 {
 	std::map<std::string, std::string>::const_iterator it = headers.find(lowerKey);
 	if (it == headers.end())
@@ -42,7 +46,6 @@ static std::string getHeaderValueLowerKey(const std::map<std::string, std::strin
 
 static std::string toUpperHttpKey(const std::string& lowerKey)
 {
-	// "user-agent" -> "HTTP_USER_AGENT"
 	std::string r = "HTTP_";
 	for (std::size_t i = 0; i < lowerKey.size(); ++i)
 	{
@@ -85,13 +88,155 @@ static bool readAllFd(int fd, std::string& out)
 		if (errno == EINTR)
 			continue;
 
-		// если fd блокирующий, EAGAIN почти не должен случаться
 		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			continue;
 
 		return false;
 	}
 }
+
+static void buildCgiEnv(
+	const std::string& scriptPath,
+	const HttpRequest& req,
+	const std::map<std::string, std::string>& envExtra,
+	std::vector<std::string>& envOut
+)
+{
+	envOut.clear();
+	envOut.reserve(64);
+
+	envOut.push_back("GATEWAY_INTERFACE=CGI/1.1");
+	envOut.push_back("SERVER_PROTOCOL=" + req.version);
+	envOut.push_back("REQUEST_METHOD=" + req.method);
+
+	envOut.push_back("SCRIPT_FILENAME=" + scriptPath);
+	envOut.push_back("SCRIPT_NAME=" + req.path);
+	envOut.push_back("QUERY_STRING=" + req.query);
+
+	{
+		std::string host = getHeaderValueLowerKey(req.headers, "host");
+		if (!host.empty())
+			envOut.push_back("HTTP_HOST=" + stripSpaces(host));
+	}
+	{
+		std::string ct = getHeaderValueLowerKey(req.headers, "content-type");
+		if (!ct.empty())
+			envOut.push_back("CONTENT_TYPE=" + stripSpaces(ct));
+	}
+
+	if (req.method == "POST")
+		envOut.push_back("CONTENT_LENGTH=" + std::to_string(req.body.size()));
+	else
+		envOut.push_back("CONTENT_LENGTH=0");
+
+	for (std::map<std::string, std::string>::const_iterator it = req.headers.begin();
+		 it != req.headers.end(); ++it)
+	{
+		const std::string& k = it->first;
+		const std::string& v = it->second;
+
+		if (k == "host" || k == "content-type" || k == "content-length")
+			continue;
+
+		envOut.push_back(toUpperHttpKey(k) + "=" + stripSpaces(v));
+	}
+
+	for (std::map<std::string, std::string>::const_iterator it = envExtra.begin();
+		 it != envExtra.end(); ++it)
+	{
+		envOut.push_back(it->first + "=" + it->second);
+	}
+}
+
+// ---------------- async spawn (NEW) ----------------
+
+bool CgiRunner::spawn(
+	const std::string& interpreter,
+	const std::string& scriptPath,
+	const HttpRequest& req,
+	const std::map<std::string, std::string>& envExtra,
+	Spawned& out
+)
+{
+	int inPipe[2] = {-1, -1};
+	int outPipe[2] = {-1, -1};
+	int errPipe[2] = {-1, -1};
+
+	out.pid = -1;
+	out.stdinFd = -1;
+	out.stdoutFd = -1;
+	out.stderrFd = -1;
+
+	if (::pipe(inPipe) < 0)
+		return false;
+	if (::pipe(outPipe) < 0)
+	{
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
+		return false;
+	}
+	if (::pipe(errPipe) < 0)
+	{
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
+		closeIfValid(outPipe[0]);
+		closeIfValid(outPipe[1]);
+		return false;
+	}
+
+	pid_t pid = ::fork();
+	if (pid < 0)
+	{
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
+		closeIfValid(outPipe[0]);
+		closeIfValid(outPipe[1]);
+		closeIfValid(errPipe[0]);
+		closeIfValid(errPipe[1]);
+		return false;
+	}
+
+	if (pid == 0)
+	{
+		::dup2(inPipe[0], STDIN_FILENO);
+		::dup2(outPipe[1], STDOUT_FILENO);
+		::dup2(errPipe[1], STDERR_FILENO);
+
+		::close(inPipe[0]);
+		::close(inPipe[1]);
+		::close(outPipe[0]);
+		::close(outPipe[1]);
+		::close(errPipe[0]);
+		::close(errPipe[1]);
+
+		std::vector<std::string> env;
+		buildCgiEnv(scriptPath, req, envExtra, env);
+
+		std::vector<char*> envp = buildEnvp(env);
+
+		char* argv[3];
+		argv[0] = const_cast<char*>(interpreter.c_str());
+		argv[1] = const_cast<char*>(scriptPath.c_str());
+		argv[2] = 0;
+
+		::execve(argv[0], argv, envp.data());
+		::_exit(127);
+	}
+
+	// parent: keep write-end for stdin, read-ends for stdout/stderr
+	closeIfValid(inPipe[0]);
+	closeIfValid(outPipe[1]);
+	closeIfValid(errPipe[1]);
+
+	out.pid = pid;
+	out.stdinFd = inPipe[1];
+	out.stdoutFd = outPipe[0];
+	out.stderrFd = errPipe[0];
+
+	return true;
+}
+
+// ---------------- old blocking run (kept for now) ----------------
 
 bool CgiRunner::run(
 	const std::string& interpreter,
@@ -113,93 +258,49 @@ bool CgiRunner::run(
 		return false;
 	if (::pipe(outPipe) < 0)
 	{
-		closeIfValid(inPipe[0]); closeIfValid(inPipe[1]);
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
 		return false;
 	}
 	if (::pipe(errPipe) < 0)
 	{
-		closeIfValid(inPipe[0]); closeIfValid(inPipe[1]);
-		closeIfValid(outPipe[0]); closeIfValid(outPipe[1]);
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
+		closeIfValid(outPipe[0]);
+		closeIfValid(outPipe[1]);
 		return false;
 	}
 
 	pid_t pid = ::fork();
 	if (pid < 0)
 	{
-		closeIfValid(inPipe[0]); closeIfValid(inPipe[1]);
-		closeIfValid(outPipe[0]); closeIfValid(outPipe[1]);
-		closeIfValid(errPipe[0]); closeIfValid(errPipe[1]);
+		closeIfValid(inPipe[0]);
+		closeIfValid(inPipe[1]);
+		closeIfValid(outPipe[0]);
+		closeIfValid(outPipe[1]);
+		closeIfValid(errPipe[0]);
+		closeIfValid(errPipe[1]);
 		return false;
 	}
 
 	if (pid == 0)
 	{
-		// child: stdin/out/err
 		::dup2(inPipe[0], STDIN_FILENO);
 		::dup2(outPipe[1], STDOUT_FILENO);
 		::dup2(errPipe[1], STDERR_FILENO);
 
-		::close(inPipe[0]); ::close(inPipe[1]);
-		::close(outPipe[0]); ::close(outPipe[1]);
-		::close(errPipe[0]); ::close(errPipe[1]);
+		::close(inPipe[0]);
+		::close(inPipe[1]);
+		::close(outPipe[0]);
+		::close(outPipe[1]);
+		::close(errPipe[0]);
+		::close(errPipe[1]);
 
-		// CGI env
 		std::vector<std::string> env;
-		env.reserve(64);
-
-		env.push_back("GATEWAY_INTERFACE=CGI/1.1");
-		env.push_back("SERVER_PROTOCOL=" + req.version);
-		env.push_back("REQUEST_METHOD=" + req.method);
-
-		// важное: path без query уже норм
-		env.push_back("SCRIPT_FILENAME=" + scriptPath);
-		env.push_back("SCRIPT_NAME=" + req.path);
-
-		// важное: query берём из req.query
-		env.push_back("QUERY_STRING=" + req.query);
-
-		// host + content-type
-		{
-			std::string host = getHeaderValueLowerKey(req.headers, "host");
-			if (!host.empty())
-				env.push_back("HTTP_HOST=" + stripSpaces(host));
-		}
-		{
-			std::string ct = getHeaderValueLowerKey(req.headers, "content-type");
-			if (!ct.empty())
-				env.push_back("CONTENT_TYPE=" + stripSpaces(ct));
-		}
-
-		// content-length
-		if (req.method == "POST")
-			env.push_back("CONTENT_LENGTH=" + std::to_string(req.body.size()));
-		else
-			env.push_back("CONTENT_LENGTH=0");
-
-		// прокинем заголовки как HTTP_*
-		for (std::map<std::string, std::string>::const_iterator it = req.headers.begin();
-			 it != req.headers.end(); ++it)
-		{
-			const std::string& k = it->first;
-			const std::string& v = it->second;
-
-			// эти уже отдельно кладём
-			if (k == "host" || k == "content-type" || k == "content-length")
-				continue;
-
-			env.push_back(toUpperHttpKey(k) + "=" + stripSpaces(v));
-		}
-
-		// envExtra
-		for (std::map<std::string, std::string>::const_iterator it = envExtra.begin();
-			 it != envExtra.end(); ++it)
-		{
-			env.push_back(it->first + "=" + it->second);
-		}
+		buildCgiEnv(scriptPath, req, envExtra, env);
 
 		std::vector<char*> envp = buildEnvp(env);
 
-		// argv: interpreter scriptPath
 		char* argv[3];
 		argv[0] = const_cast<char*>(interpreter.c_str());
 		argv[1] = const_cast<char*>(scriptPath.c_str());
@@ -209,12 +310,10 @@ bool CgiRunner::run(
 		::_exit(127);
 	}
 
-	// parent
 	closeIfValid(inPipe[0]);
 	closeIfValid(outPipe[1]);
 	closeIfValid(errPipe[1]);
 
-	// write body
 	std::size_t off = 0;
 	while (off < req.body.size())
 	{
@@ -250,5 +349,8 @@ bool CgiRunner::run(
 	else
 		out.exitCode = 1;
 
-	return (okOut && okErr);
+	if (!okOut || !okErr)
+		return false;
+
+	return true;
 }

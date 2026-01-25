@@ -20,6 +20,9 @@ struct CgiProcess
 	std::string stdoutBuffer;
 	std::string stderrBuffer;
 
+	std::string method;
+	std::string version;
+
 	bool stdinClosed;
 	bool stdoutClosed;
 	bool stderrClosed;
@@ -39,6 +42,8 @@ struct CgiProcess
 		, stdinOffset(0)
 		, stdoutBuffer()
 		, stderrBuffer()
+		, method()
+		, version()
 		, stdinClosed(false)
 		, stdoutClosed(false)
 		, stderrClosed(false)

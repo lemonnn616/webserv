@@ -2,7 +2,6 @@
 #include "http/HttpError.hpp"
 #include "utils/FileUtils.hpp"
 #include "http/AutoIndex.hpp"
-#include "cgi/CgiRunner.hpp"
 
 #include <unistd.h>
 #include <ctime>
@@ -63,7 +62,7 @@ static std::string getExtWithDot(const std::string& p)
 	std::size_t dot = p.rfind('.');
 	if (dot == std::string::npos)
 		return "";
-	return p.substr(dot); // ".py"
+	return p.substr(dot);
 }
 
 static std::string getContentTypeByPath(const std::string& p)
@@ -129,7 +128,6 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 	if (!loc)
 		return rel;
 
-	// root location: "/a/b" -> "a/b"
 	if (loc->prefix == "/")
 	{
 		if (reqPath.size() > 1)
@@ -137,192 +135,90 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 		return "";
 	}
 
-	// normalize prefix folder name: "/cgi-bin" -> "cgi-bin"
 	std::string prefixFolder = loc->prefix;
 	if (!prefixFolder.empty() && prefixFolder[0] == '/')
 		prefixFolder.erase(0, 1);
 
-	// remainder after location prefix
 	std::string rest;
 	if (reqPath.size() > loc->prefix.size())
 	{
-		rest = reqPath.substr(loc->prefix.size()); // starts with "/hello.py"
+		rest = reqPath.substr(loc->prefix.size());
 		if (!rest.empty() && rest[0] == '/')
-			rest.erase(0, 1); // "hello.py"
+			rest.erase(0, 1);
 	}
 	else
 	{
 		rest = "";
 	}
 
-	// If loc.root is set, assume it already points to directory for this location
-	// => use only remainder
 	if (!loc->root.empty())
 		return rest;
 
-	// Default: location maps to folder under server root
-	// => "cgi-bin" + "/" + "hello.py"
 	if (rest.empty())
 		return prefixFolder;
 
 	return prefixFolder + "/" + rest;
 }
 
-// --- CGI stdout parsing ---
-// CGI typically outputs:
-//   Status: 200 OK\r\n (optional)
-//   Header: value\r\n
-//   \r\n
-//   body...
-static bool parseCgiOutput(const std::string& out, HttpResponse& res)
+// ---------- new router result ----------
+
+HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerConfig& cfg)
 {
-	std::size_t sep = out.find("\r\n\r\n");
-	if (sep == std::string::npos)
-	{
-		// allow LF-only (some scripts do \n)
-		sep = out.find("\n\n");
-		if (sep == std::string::npos)
-			return false;
-	}
-
-	std::string head = out.substr(0, sep);
-	std::string body;
-	if (out.size() > sep)
-	{
-		// if \r\n\r\n -> +4, if \n\n -> +2
-		if (out.compare(sep, 4, "\r\n\r\n") == 0)
-			body = out.substr(sep + 4);
-		else
-			body = out.substr(sep + 2);
-	}
-
-	// defaults
-	res.status = 200;
-	res.reason = "OK";
-	res.body = body;
-
-	// split lines
-	std::size_t pos = 0;
-	while (pos < head.size())
-	{
-		std::size_t eol = head.find("\n", pos);
-		std::string line;
-		if (eol == std::string::npos)
-		{
-			line = head.substr(pos);
-			pos = head.size();
-		}
-		else
-		{
-			line = head.substr(pos, eol - pos);
-			pos = eol + 1;
-		}
-
-		// trim trailing '\r'
-		if (!line.empty() && line[line.size() - 1] == '\r')
-			line.erase(line.size() - 1);
-
-		if (line.empty())
-			continue;
-
-		std::size_t colon = line.find(':');
-		if (colon == std::string::npos)
-			continue;
-
-		std::string key = line.substr(0, colon);
-		std::string val = line.substr(colon + 1);
-
-		// ltrim spaces
-		while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
-			val.erase(0, 1);
-
-		std::string keyLower = toLowerStr(key);
-
-		if (keyLower == "status")
-		{
-			// "200 OK"
-			int code = std::atoi(val.c_str());
-			if (code > 0)
-				res.status = code;
-
-			std::size_t sp = val.find(' ');
-			if (sp != std::string::npos && sp + 1 < val.size())
-				res.reason = val.substr(sp + 1);
-			else
-				res.reason = "OK";
-		}
-		else
-		{
-			// CGI headers -> HTTP headers
-			res.headers[key] = val;
-		}
-	}
-
-	// Content-Length: if not provided, set from body
-	if (res.headers.find("Content-Length") == res.headers.end())
-		res.headers["Content-Length"] = std::to_string(res.body.size());
-
-	// If no Content-Type, assume text/plain
-	if (res.headers.find("Content-Type") == res.headers.end())
-		res.headers["Content-Type"] = "text/plain";
-
-	return true;
-}
-
-// ---------- main router ----------
-
-HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
-{
-	HttpResponse res;
-	res.version = req.version;
+	RouteResult rr;
+	rr.response.version = req.version;
 
 	const LocationConfig* loc = matchLocation(cfg, req.path);
 	if (!loc)
 	{
-		HttpError::fill(res, cfg, 500, "Internal Server Error");
+		HttpError::fill(rr.response, cfg, 500, "Internal Server Error");
 		if (req.method == "HEAD")
-			res.body = "";
-		applyConnectionPolicy(req, res);
-		return res;
+			rr.response.body = "";
+		applyConnectionPolicy(req, rr.response);
+		return rr;
 	}
 
 	// ----- method allowed? -----
 	bool methodAllowed = false;
-	if (req.method == "GET" && loc->allowGet) methodAllowed = true;
-	else if (req.method == "HEAD" && loc->allowHead) methodAllowed = true;
-	else if (req.method == "POST" && loc->allowPost) methodAllowed = true;
-	else if (req.method == "DELETE" && loc->allowDelete) methodAllowed = true;
+	if (req.method == "GET" && loc->allowGet)
+		methodAllowed = true;
+	else if (req.method == "HEAD" && loc->allowHead)
+		methodAllowed = true;
+	else if (req.method == "POST" && loc->allowPost)
+		methodAllowed = true;
+	else if (req.method == "DELETE" && loc->allowDelete)
+		methodAllowed = true;
 
 	if (!methodAllowed)
 	{
-		res.status = 405;
-		res.reason = "Method Not Allowed";
-		res.body = "Method Not Allowed\n";
-		res.headers["Content-Type"] = "text/plain";
-		res.headers["Content-Length"] = std::to_string(res.body.size());
-		res.headers["Allow"] = buildAllowHeader(*loc);
+		rr.response.status = 405;
+		rr.response.reason = "Method Not Allowed";
+		rr.response.body = "Method Not Allowed\n";
+		rr.response.headers["Content-Type"] = "text/plain";
+		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
+		rr.response.headers["Allow"] = buildAllowHeader(*loc);
 
 		if (req.method == "HEAD")
-			res.body = "";
+			rr.response.body = "";
 
-		applyConnectionPolicy(req, res);
-		return res;
+		applyConnectionPolicy(req, rr.response);
+		return rr;
 	}
 
 	// ----- redirect/return -----
 	if (loc->hasReturn)
 	{
 		int code = loc->returnCode;
-		if (code <= 0) code = 302;
+		if (code <= 0)
+			code = 302;
 
-		res.status = code;
-		res.reason = "Found";
-		res.headers["Location"] = loc->returnUrl;
-		res.body = "";
-		res.headers["Content-Length"] = "0";
+		rr.response.status = code;
+		rr.response.reason = "Found";
+		rr.response.headers["Location"] = loc->returnUrl;
+		rr.response.body = "";
+		rr.response.headers["Content-Length"] = "0";
 
-		applyConnectionPolicy(req, res);
-		return res;
+		applyConnectionPolicy(req, rr.response);
+		return rr;
 	}
 
 	// ----- build filesystem path using location -----
@@ -338,55 +234,33 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	std::string fsPath = FileUtils::join(baseRoot, relPath);
 
 	// =========================
-	// CGI (by extension in cfg.cgi)
+	// CGI (DETECT ONLY, NO RUN)
 	// =========================
 	{
-		std::string ext = getExtWithDot(fsPath); // ".py"
+		std::string ext = getExtWithDot(fsPath);
 		std::map<std::string, std::string>::const_iterator it = cfg.cgi.find(ext);
+
 		if (!ext.empty() && it != cfg.cgi.end())
 		{
-			// must exist and not be directory
 			if (!FileUtils::exists(fsPath) || FileUtils::isDirectory(fsPath))
 			{
-				HttpError::fill(res, cfg, 404, "Not Found");
+				HttpError::fill(rr.response, cfg, 404, "Not Found");
 				if (req.method == "HEAD")
-					res.body = "";
-				applyConnectionPolicy(req, res);
-				return res;
+					rr.response.body = "";
+				applyConnectionPolicy(req, rr.response);
+				return rr;
 			}
 
-			CgiRunner::Result cg;
-			std::map<std::string, std::string> extra; // later you can add SCRIPT_ROOT etc.
+			rr.isCgi = true;
+			rr.cgiInterpreter = it->second;
+			rr.cgiScriptPath = fsPath;
 
-			bool ok = CgiRunner::run(it->second, fsPath, req, extra, cg);
-			if (!ok || cg.stdoutData.empty())
-			{
-				// if stderr not empty -> helpful for debug
-				HttpError::fill(res, cfg, 502, "Bad Gateway");
-				applyConnectionPolicy(req, res);
-				return res;
-			}
-
-			HttpResponse cgiRes;
-			cgiRes.version = req.version;
-
-			if (!parseCgiOutput(cg.stdoutData, cgiRes))
-			{
-				HttpError::fill(res, cfg, 502, "Bad Gateway");
-				applyConnectionPolicy(req, res);
-				return res;
-			}
-
-			// HEAD: same headers, empty body
-			if (req.method == "HEAD")
-				cgiRes.body = "";
-
-			applyConnectionPolicy(req, cgiRes);
-			return cgiRes;
+			// rr.response здесь не трогаем: HttpHandler сделает spawn + сбор stdout
+			return rr;
 		}
 	}
 
-	// ----- POST: upload body to uploadDir -----
+	// ----- POST: upload -----
 	if (req.method == "POST")
 	{
 		std::string dir = cfg.uploadDir;
@@ -398,174 +272,185 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 
 		if (!FileUtils::writeFile(full, req.body))
 		{
-			HttpError::fill(res, cfg, 500, "Internal Server Error");
+			HttpError::fill(rr.response, cfg, 500, "Internal Server Error");
 			if (req.method == "HEAD")
-				res.body = "";
-			applyConnectionPolicy(req, res);
-			return res;
+				rr.response.body = "";
+			applyConnectionPolicy(req, rr.response);
+			return rr;
 		}
 
-		res.status = 201;
-		res.reason = "Created";
-		res.body = "Uploaded: " + name + "\n";
-		res.headers["Content-Type"] = "text/plain";
-		res.headers["Content-Length"] = std::to_string(res.body.size());
+		rr.response.status = 201;
+		rr.response.reason = "Created";
+		rr.response.body = "Uploaded: " + name + "\n";
+		rr.response.headers["Content-Type"] = "text/plain";
+		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
 
-		applyConnectionPolicy(req, res);
-		return res;
+		applyConnectionPolicy(req, rr.response);
+		return rr;
 	}
 
-
-// ----- DELETE: delete file by fsPath -----
+	// ----- DELETE -----
 	if (req.method == "DELETE")
 	{
 		if (FileUtils::isDirectory(fsPath))
 		{
-			res.status = 403;
-			res.reason = "Forbidden";
-			res.body = "Cannot delete directory\n";
-			res.headers["Content-Type"] = "text/plain";
-			res.headers["Content-Length"] = std::to_string(res.body.size());
-			res.headers["Connection"] = "close";
-			return res;
+			rr.response.status = 403;
+			rr.response.reason = "Forbidden";
+			rr.response.body = "Cannot delete directory\n";
+			rr.response.headers["Content-Type"] = "text/plain";
+			rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
+			rr.response.headers["Connection"] = "close";
+			return rr;
 		}
 
 		if (::remove(fsPath.c_str()) != 0)
 		{
-			// distinguish errors
 			if (errno == ENOENT)
 			{
-				res.status = 404;
-				res.reason = "Not Found";
-				res.body = "Not Found\n";
-				res.headers["Content-Type"] = "text/plain";
-				res.headers["Content-Length"] = std::to_string(res.body.size());
-				res.headers["Connection"] = "close";
-				return res;
+				rr.response.status = 404;
+				rr.response.reason = "Not Found";
+				rr.response.body = "Not Found\n";
+				rr.response.headers["Content-Type"] = "text/plain";
+				rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
+				rr.response.headers["Connection"] = "close";
+				return rr;
 			}
 			if (errno == EACCES || errno == EPERM)
 			{
-				res.status = 403;
-				res.reason = "Forbidden";
-				res.body = "Forbidden\n";
-				res.headers["Content-Type"] = "text/plain";
-				res.headers["Content-Length"] = std::to_string(res.body.size());
-				res.headers["Connection"] = "close";
-				return res;
+				rr.response.status = 403;
+				rr.response.reason = "Forbidden";
+				rr.response.body = "Forbidden\n";
+				rr.response.headers["Content-Type"] = "text/plain";
+				rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
+				rr.response.headers["Connection"] = "close";
+				return rr;
 			}
 
-			HttpError::fill(res, cfg, 500, "Internal Server Error");
+			HttpError::fill(rr.response, cfg, 500, "Internal Server Error");
 			if (req.method == "HEAD")
-				res.body = "";
-			res.headers["Connection"] = "close";
-			return res;
+				rr.response.body = "";
+			rr.response.headers["Connection"] = "close";
+			return rr;
 		}
 
-		res.status = 204;
-		res.reason = "No Content";
-		res.body = "";
-		res.headers["Content-Length"] = "0";
-		res.headers["Connection"] = "close";
-		return res;
+		rr.response.status = 204;
+		rr.response.reason = "No Content";
+		rr.response.body = "";
+		rr.response.headers["Content-Length"] = "0";
+		rr.response.headers["Connection"] = "close";
+		return rr;
 	}
 
-
-// ----- serve file (GET/HEAD) -----
-
-	// If path exists and is directory -> redirect/index/autoindex
+	// ----- serve file (GET/HEAD) -----
 	if (FileUtils::exists(fsPath) && FileUtils::isDirectory(fsPath))
 	{
-		// Redirect: "/uploads" -> "/uploads/"
 		if (!req.path.empty() && req.path[req.path.size() - 1] != '/')
 		{
-			res.status = 301;
-			res.reason = "Moved Permanently";
-			res.headers["Location"] = req.path + "/";
-			res.body = "";
-			res.headers["Content-Length"] = "0";
+			rr.response.status = 301;
+			rr.response.reason = "Moved Permanently";
+			rr.response.headers["Location"] = req.path + "/";
+			rr.response.body = "";
+			rr.response.headers["Content-Length"] = "0";
 
 			if (req.method == "HEAD")
-				res.body = "";
+				rr.response.body = "";
 
-			applyConnectionPolicy(req, res);
-			return res;
+			applyConnectionPolicy(req, rr.response);
+			return rr;
 		}
 
-		// Try index inside directory
 		{
 			std::string indexPath = FileUtils::join(fsPath, indexName);
 			std::string indexBody;
 
 			if (FileUtils::readFile(indexPath, indexBody))
 			{
-				res.status = 200;
-				res.reason = "OK";
-				res.headers["Content-Type"] = getContentTypeByPath(indexPath);
-				res.headers["Content-Length"] = std::to_string(indexBody.size());
+				rr.response.status = 200;
+				rr.response.reason = "OK";
+				rr.response.headers["Content-Type"] = getContentTypeByPath(indexPath);
+				rr.response.headers["Content-Length"] = std::to_string(indexBody.size());
 
 				if (req.method == "GET")
-					res.body = indexBody;
+					rr.response.body = indexBody;
 				else
-					res.body = "";
+					rr.response.body = "";
 
-				applyConnectionPolicy(req, res);
-				return res;
+				applyConnectionPolicy(req, rr.response);
+				return rr;
 			}
 		}
 
-		// Autoindex if enabled
 		if (loc->autoindex)
 		{
 			std::string html = AutoIndex::generate(req.path, fsPath);
 			if (!html.empty())
 			{
-				res.status = 200;
-				res.reason = "OK";
-				res.headers["Content-Type"] = "text/html";
-				res.headers["Content-Length"] = std::to_string(html.size());
+				rr.response.status = 200;
+				rr.response.reason = "OK";
+				rr.response.headers["Content-Type"] = "text/html";
+				rr.response.headers["Content-Length"] = std::to_string(html.size());
 
 				if (req.method == "GET")
-					res.body = html;
+					rr.response.body = html;
 				else
-					res.body = "";
+					rr.response.body = "";
 
-				applyConnectionPolicy(req, res);
-				return res;
+				applyConnectionPolicy(req, rr.response);
+				return rr;
 			}
 		}
 
-		// Directory but no index and autoindex off -> 404
-		HttpError::fill(res, cfg, 404, "Not Found");
+		HttpError::fill(rr.response, cfg, 404, "Not Found");
+		if (req.method == "HEAD")
+			rr.response.body = "";
+		applyConnectionPolicy(req, rr.response);
+		return rr;
+	}
+
+	{
+		std::string body;
+
+		if (!FileUtils::readFile(fsPath, body))
+		{
+			HttpError::fill(rr.response, cfg, 404, "Not Found");
+			if (req.method == "HEAD")
+				rr.response.body = "";
+			applyConnectionPolicy(req, rr.response);
+			return rr;
+		}
+
+		rr.response.status = 200;
+		rr.response.reason = "OK";
+		rr.response.headers["Content-Type"] = getContentTypeByPath(fsPath);
+		rr.response.headers["Content-Length"] = std::to_string(body.size());
+
+		if (req.method == "GET")
+			rr.response.body = body;
+		else
+			rr.response.body = "";
+
+		applyConnectionPolicy(req, rr.response);
+		return rr;
+	}
+}
+
+// old API for compatibility (temporary)
+HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
+{
+	RouteResult rr = route2(req, cfg);
+
+	// ВАЖНО: если это CGI, старый route() НЕ МОЖЕТ его выполнить без блокировки.
+	// Поэтому возвращаем 500, пока HttpHandler не будет переведён на route2().
+	if (rr.isCgi)
+	{
+		HttpResponse res;
+		res.version = req.version;
+		HttpError::fill(res, cfg, 500, "Internal Server Error");
 		if (req.method == "HEAD")
 			res.body = "";
 		applyConnectionPolicy(req, res);
 		return res;
 	}
 
-	// Normal file
-	{
-		std::string body;
-
-		if (!FileUtils::readFile(fsPath, body))
-		{
-			HttpError::fill(res, cfg, 404, "Not Found");
-			if (req.method == "HEAD")
-				res.body = "";
-			applyConnectionPolicy(req, res);
-			return res;
-		}
-
-		res.status = 200;
-		res.reason = "OK";
-		res.headers["Content-Type"] = getContentTypeByPath(fsPath);
-		res.headers["Content-Length"] = std::to_string(body.size());
-
-		if (req.method == "GET")
-			res.body = body;
-		else
-			res.body = "";
-
-		applyConnectionPolicy(req, res);
-		return res;
-	}
+	return rr.response;
 }

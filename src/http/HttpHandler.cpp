@@ -2,6 +2,7 @@
 #include "http/HttpParser.hpp"
 #include "http/HttpRouter.hpp"
 #include "http/HttpError.hpp"
+#include "cgi/CgiRunner.hpp"
 
 HttpHandler::~HttpHandler() {}
 
@@ -15,64 +16,106 @@ void HttpHandler::setServerConfigs(const std::vector<ServerConfig>* cfgs)
 	_cfgs = cfgs;
 }
 
+static void fillBadGateway(HttpResponse& res,const ServerConfig& cfg,const HttpRequest& req)
+{
+	HttpError::fill(res,cfg,502,"Bad Gateway");
+	res.headers["Connection"]="close";
+	if(req.method=="HEAD")
+		res.body="";
+}
+
 void HttpHandler::onDataReceived(
-	int,
+	int fd,
 	std::string& inBuffer,
 	std::string& outBuffer,
 	ConnectionState& state,
 	std::size_t serverConfigIndex,
-	std::string&
+	std::string& stateData
 )
 {
-	if (!_cfgs || _cfgs->empty())
+	(void)fd;
+
+	if(!_cfgs||_cfgs->empty())
 		return;
 
 	const ServerConfig* cfg;
-	if (serverConfigIndex < _cfgs->size())
-		cfg = &(*_cfgs)[serverConfigIndex];
+	if(serverConfigIndex<_cfgs->size())
+		cfg=&(*_cfgs)[serverConfigIndex];
 	else
-		cfg = &(*_cfgs)[0];
+		cfg=&(*_cfgs)[0];
 
 	HttpRequest req;
-	HttpParser::Result r = HttpParser::parse(inBuffer, req, cfg->clientMaxBodySize);
+	HttpParser::Result r=HttpParser::parse(inBuffer,req,cfg->clientMaxBodySize);
 
-	if (r == HttpParser::NEED_MORE)
+	if(r==HttpParser::NEED_MORE)
 	{
-		state = ConnectionState::READING;
+		state=ConnectionState::READING;
 		return;
 	}
 
 	HttpResponse res;
 
-	if (r == HttpParser::BAD_REQUEST)
+	if(r==HttpParser::BAD_REQUEST)
 	{
-		HttpError::fill(res, *cfg, 400, "Bad Request");
-		res.headers["Connection"] = "close";
-		// req может быть невалидным — не трогаем res.version (пусть будет HTTP/1.1 по умолчанию)
-		outBuffer = res.serialize();
-		state = ConnectionState::WRITING;
+		HttpError::fill(res,*cfg,400,"Bad Request");
+		res.headers["Connection"]="close";
+		outBuffer=res.serialize();
+		state=ConnectionState::WRITING;
 		return;
 	}
 
-	if (r == HttpParser::TOO_LARGE)
+	if(r==HttpParser::TOO_LARGE)
 	{
-		HttpError::fill(res, *cfg, 413, "Payload Too Large");
-		res.headers["Connection"] = "close";
-		// req может быть невалидным — не трогаем res.version
-		outBuffer = res.serialize();
-		state = ConnectionState::WRITING;
+		HttpError::fill(res,*cfg,413,"Payload Too Large");
+		res.headers["Connection"]="close";
+		outBuffer=res.serialize();
+		state=ConnectionState::WRITING;
 		return;
 	}
 
-	// OK: теперь req валиден => можно вернуть ту же версию
-	res = HttpRouter::route(req, *cfg);
-	
-	// всегда закрываем соединение — упрощает Core и nc/curl
-	res.headers["Connection"] = "close";
+	HttpRouter::RouteResult rr=HttpRouter::route2(req,*cfg);
 
-	// версия известна, т.к. parse == OK
-	res.version = req.version;
+	if(rr.isCgi)
+	{
+		CgiRunner::Spawned sp;
+		std::map<std::string,std::string> extra;
 
-	outBuffer = res.serialize();
-	state = ConnectionState::WRITING;
+		if(!CgiRunner::spawn(rr.cgiInterpreter,rr.cgiScriptPath,req,extra,sp))
+		{
+			fillBadGateway(res,*cfg,req);
+			outBuffer=res.serialize();
+			state=ConnectionState::WRITING;
+			return;
+		}
+
+		// Формат stateData:
+		// CGI|<pid>|<stdinFd>|<stdoutFd>|<stderrFd>|<method>|<version>|<len>\n<body>
+		stateData.clear();
+		stateData+="CGI|";
+		stateData+=std::to_string((long long)sp.pid);
+		stateData+="|";
+		stateData+=std::to_string(sp.stdinFd);
+		stateData+="|";
+		stateData+=std::to_string(sp.stdoutFd);
+		stateData+="|";
+		stateData+=std::to_string(sp.stderrFd);
+		stateData+="|";
+		stateData+=req.method;
+		stateData+="|";
+		stateData+=req.version;
+		stateData+="|";
+		stateData+=std::to_string(req.body.size());
+		stateData+="\n";
+		stateData.append(req.body);
+
+		state=ConnectionState::CGI_PENDING;
+		return;
+	}
+
+	res=rr.response;
+	res.headers["Connection"]="close";
+	res.version=req.version;
+
+	outBuffer=res.serialize();
+	state=ConnectionState::WRITING;
 }

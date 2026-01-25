@@ -6,5 +6,6 @@ enum class ConnectionState
 	READING,
 	PARSED,
 	WRITING,
+	CGI_PENDING,
 	CLOSING
 };

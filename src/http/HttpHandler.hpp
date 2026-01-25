@@ -18,7 +18,7 @@ public:
 		std::string& outBuffer,
 		ConnectionState& state,
 		std::size_t serverConfigIndex,
-		std::string& sessionId
+		std::string& stateData
 	);
 
 private:

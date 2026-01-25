@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <cstddef>
+
 #include "core/Client.hpp"
 #include "ServerConfig.hpp"
 #include "cgi/CgiProcess.hpp"
@@ -91,4 +92,7 @@ private:
 	void computeMaxClients();
 
 	static volatile sig_atomic_t _stopRequested;
+
+	// CGI финализация (важно для неблокирующего CGI)
+	void finalizeCgiIfDone(EventLoop& loop, pid_t pid);
 };
