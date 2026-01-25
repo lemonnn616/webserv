@@ -146,6 +146,8 @@ void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 
 			if(errno==EMFILE||errno==ENFILE)
 			{
+				Logger::error("accept EMFILE/ENFILE on listen fd "+std::to_string(listenFd));
+
 				if(_reserveFd>=0)
 				{
 					::close(_reserveFd);

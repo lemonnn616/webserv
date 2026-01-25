@@ -20,12 +20,6 @@ bool CoreServer::stopRequested()
 
 void CoreServer::shutdown(EventLoop& loop)
 {
-	if(_reserveFd>=0)
-	{
-		::close(_reserveFd);
-		_reserveFd=-1;
-	}
-
 	std::vector<pid_t> pids;
 	pids.reserve(_cgi.size());
 
@@ -63,7 +57,14 @@ void CoreServer::shutdown(EventLoop& loop)
 		loop.removeFd(_listenFds[i]);
 		::close(_listenFds[i]);
 	}
+
 	_listenFds.clear();
 	_listenFdToServerIndex.clear();
 	_listenFdToPort.clear();
+
+	if(_reserveFd>=0)
+	{
+		::close(_reserveFd);
+		_reserveFd=-1;
+	}
 }
