@@ -568,4 +568,4 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		applyConnectionPolicy(req, res);
 		return res;
 	}
-
+}
