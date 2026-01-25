@@ -6,6 +6,7 @@
 #include <chrono>
 #include <signal.h>
 #include <sys/types.h>
+#include <cstddef>
 #include "core/Client.hpp"
 #include "ServerConfig.hpp"
 #include "cgi/CgiProcess.hpp"
@@ -64,7 +65,6 @@ private:
 	std::map<unsigned short,std::size_t> _defaultServerByPort;
 	std::map<unsigned short,std::map<std::string,std::size_t> > _serverByPortHost;
 
-
 	std::map<int,Client> _clients;
 	std::map<pid_t,CgiProcess> _cgi;
 	std::map<int,pid_t> _cgiFdToPid;
@@ -76,6 +76,9 @@ private:
 
 	IHttpHandler* _httpHandler;
 
+	int _reserveFd;
+	std::size_t _maxClients;
+
 	void cleanupCgi(EventLoop& loop,pid_t pid);
 	void checkCgiTimeouts(EventLoop& loop);
 	bool initListenSockets();
@@ -85,6 +88,7 @@ private:
 	void updateServerIndexFromHost(Client& client);
 	std::size_t selectServerIndexByHost(unsigned short port,std::size_t defaultIndex,const std::string& host) const;
 
-	static volatile sig_atomic_t _stopRequested;
+	void computeMaxClients();
 
+	static volatile sig_atomic_t _stopRequested;
 };

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <set>
 #include <stdexcept>
+#include <sys/resource.h>
 
 CoreServer::CoreServer(const std::string& configPath)
 	:_serverConfigs()
@@ -31,6 +32,8 @@ CoreServer::CoreServer(const std::string& configPath)
 	,_writeTimeout(std::chrono::seconds(30))
 	,_idleTimeout(std::chrono::seconds(120))
 	,_httpHandler(nullptr)
+	,_reserveFd(-1)
+	,_maxClients(1024)
 {
 	ConfigParser parser;
 	if(!parser.parseFile(_configPath,_serverConfigs))
@@ -94,6 +97,30 @@ CoreServer::CoreServer(const std::string& configPath)
 	}
 }
 
+void CoreServer::computeMaxClients()
+{
+	struct rlimit rl;
+	if(::getrlimit(RLIMIT_NOFILE,&rl)==0)
+	{
+		if(rl.rlim_cur!=RLIM_INFINITY)
+		{
+			std::size_t lim=static_cast<std::size_t>(rl.rlim_cur);
+			std::size_t safety=32;
+			std::size_t reserved=_listenFds.size()+1;
+			if(lim>safety+reserved)
+			{
+				_maxClients=lim-safety-reserved;
+				if(_maxClients<1)
+					_maxClients=1;
+				return;
+			}
+			_maxClients=1;
+			return;
+		}
+	}
+	_maxClients=1024;
+}
+
 int CoreServer::run()
 {
 	Logger::info("CoreServer starting with config: "+_configPath);
@@ -119,6 +146,13 @@ int CoreServer::run()
 	{
 		return 1;
 	}
+
+	if(_reserveFd<0)
+	{
+		_reserveFd=::open("/dev/null",O_RDONLY);
+	}
+
+	computeMaxClients();
 
 	EventLoop loop;
 	loop.run(*this);

@@ -142,11 +142,32 @@ void CoreServer::handleNewConnection(EventLoop& loop,int listenFd)
 		if(clientFd<0)
 		{
 			if(errno==EAGAIN||errno==EWOULDBLOCK)
+				break;
+
+			if(errno==EMFILE||errno==ENFILE)
 			{
+				if(_reserveFd>=0)
+				{
+					::close(_reserveFd);
+					_reserveFd=-1;
+				}
+
+				int tmp=::accept(listenFd,reinterpret_cast<sockaddr*>(&addr),&addrLen);
+				if(tmp>=0)
+					::close(tmp);
+
+				_reserveFd=::open("/dev/null",O_RDONLY);
 				break;
 			}
+
 			Logger::error("accept failed");
 			break;
+		}
+
+		if(_clients.size()>=_maxClients)
+		{
+			::close(clientFd);
+			continue;
 		}
 
 		int flags=::fcntl(clientFd,F_GETFL,0);

@@ -20,6 +20,12 @@ bool CoreServer::stopRequested()
 
 void CoreServer::shutdown(EventLoop& loop)
 {
+	if(_reserveFd>=0)
+	{
+		::close(_reserveFd);
+		_reserveFd=-1;
+	}
+
 	std::vector<pid_t> pids;
 	pids.reserve(_cgi.size());
 
