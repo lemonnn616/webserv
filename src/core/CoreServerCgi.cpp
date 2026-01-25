@@ -255,7 +255,7 @@ void CoreServer::handleCgiWrite(EventLoop& loop, int fd)
 		loop.removeFd(fd);
 		::close(fd);
 		_cgiFdToPid.erase(fd);
-		std::map<pid_t, CgiProcess>::iterator itp = _cgi.find(pid);
+		
 		p.stdinFd = -1;
 		p.stdinClosed = true;
 

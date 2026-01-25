@@ -30,7 +30,8 @@ SRC_http := \
 	HttpResponse.cpp \
 	AutoIndex.cpp \
 	ErrorPage.cpp	\
-	HttpError.cpp
+	HttpError.cpp \
+	CgiResponseParser.cpp \
 
 SRC_utils := FileUtils.cpp
 
