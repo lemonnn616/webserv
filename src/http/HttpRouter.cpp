@@ -4,6 +4,7 @@
 #include "http/AutoIndex.hpp"
 #include "cgi/CgiRunner.hpp"
 
+#include <unistd.h>
 #include <ctime>
 #include <cstdio>
 #include <string>
@@ -85,8 +86,15 @@ static std::string getContentTypeByPath(const std::string& p)
 
 static std::string makeUploadFileName()
 {
+	static unsigned long counter = 0;
 	std::time_t t = std::time(0);
-	return "upload_" + std::to_string((long long)t) + ".bin";
+	long pid = (long)::getpid();
+	++counter;
+
+	return "upload_" + std::to_string((long long)t)
+		+ "_" + std::to_string(pid)
+		+ "_" + std::to_string((unsigned long long)counter)
+		+ ".bin";
 }
 
 static const LocationConfig* matchLocation(const ServerConfig& cfg, const std::string& path)
@@ -407,7 +415,8 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		return res;
 	}
 
-	// ----- DELETE: delete file by fsPath -----
+
+// ----- DELETE: delete file by fsPath -----
 	if (req.method == "DELETE")
 	{
 		if (FileUtils::isDirectory(fsPath))
@@ -417,20 +426,38 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 			res.body = "Cannot delete directory\n";
 			res.headers["Content-Type"] = "text/plain";
 			res.headers["Content-Length"] = std::to_string(res.body.size());
-
-			applyConnectionPolicy(req, res);
+			res.headers["Connection"] = "close";
 			return res;
 		}
 
 		if (::remove(fsPath.c_str()) != 0)
 		{
-			res.status = 404;
-			res.reason = "Not Found";
-			res.body = "Not Found\n";
-			res.headers["Content-Type"] = "text/plain";
-			res.headers["Content-Length"] = std::to_string(res.body.size());
+			// distinguish errors
+			if (errno == ENOENT)
+			{
+				res.status = 404;
+				res.reason = "Not Found";
+				res.body = "Not Found\n";
+				res.headers["Content-Type"] = "text/plain";
+				res.headers["Content-Length"] = std::to_string(res.body.size());
+				res.headers["Connection"] = "close";
+				return res;
+			}
+			if (errno == EACCES || errno == EPERM)
+			{
+				res.status = 403;
+				res.reason = "Forbidden";
+				res.body = "Forbidden\n";
+				res.headers["Content-Type"] = "text/plain";
+				res.headers["Content-Length"] = std::to_string(res.body.size());
+				res.headers["Connection"] = "close";
+				return res;
+			}
 
-			applyConnectionPolicy(req, res);
+			HttpError::fill(res, cfg, 500, "Internal Server Error");
+			if (req.method == "HEAD")
+				res.body = "";
+			res.headers["Connection"] = "close";
 			return res;
 		}
 
@@ -438,45 +465,10 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		res.reason = "No Content";
 		res.body = "";
 		res.headers["Content-Length"] = "0";
-
-		applyConnectionPolicy(req, res);
+		res.headers["Connection"] = "close";
 		return res;
 	}
 
-	// ----- directory handling: index / autoindex -----
-	if (FileUtils::isDirectory(fsPath))
-	{
-		std::string idx = FileUtils::join(fsPath, indexName);
-
-		if (FileUtils::exists(idx))
-			fsPath = idx;
-		else
-		{
-			if (loc->autoindex)
-			{
-				std::string html = AutoIndex::generate(req.path, fsPath);
-
-				res.status = 200;
-				res.reason = "OK";
-				res.headers["Content-Type"] = "text/html";
-				res.headers["Content-Length"] = std::to_string(html.size());
-
-				if (req.method == "HEAD")
-					res.body = "";
-				else
-					res.body = html;
-
-				applyConnectionPolicy(req, res);
-				return res;
-			}
-
-			HttpError::fill(res, cfg, 403, "Forbidden");
-			if (req.method == "HEAD")
-				res.body = "";
-			applyConnectionPolicy(req, res);
-			return res;
-		}
-	}
 
 	// ----- serve file (GET/HEAD) -----
 	std::string body;

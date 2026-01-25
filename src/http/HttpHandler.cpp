@@ -66,8 +66,7 @@ void HttpHandler::onDataReceived(
 
 	// OK: теперь req валиден => можно вернуть ту же версию
 	res = HttpRouter::route(req, *cfg);
-	res = HttpRouter::route(req, *cfg);
-
+	
 	// всегда закрываем соединение — упрощает Core и nc/curl
 	res.headers["Connection"] = "close";
 
