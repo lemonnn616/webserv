@@ -20,5 +20,7 @@ struct Client
 
 	unsigned short listenPort;
 
+	bool peerClosed;
+
 	Client();
 };

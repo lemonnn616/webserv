@@ -94,15 +94,20 @@ void EventLoop::run(CoreServer& server)
 				}
 				else
 				{
-					if(revents&(POLLERR|POLLHUP|POLLNVAL))
+					if(revents&(POLLERR|POLLNVAL))
 					{
 						server.closeClient(*this,fd);
 						continue;
 					}
 
-					if(revents&POLLIN)
+					bool hup=(revents&POLLHUP)!=0;
+
+					if((revents&POLLIN) || hup)
 					{
 						server.handleClientRead(*this,fd);
+
+						if(server.getClients().find(fd)==server.getClients().end())
+							continue;
 					}
 
 					if(revents&POLLOUT)

@@ -192,9 +192,9 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 		}
 		else if(n==0)
 		{
-			Logger::info("Client closed fd "+std::to_string(fd));
-			closeClient(loop,fd);
-			return;
+			client.peerClosed=true;
+			Logger::info("Peer EOF on fd "+std::to_string(fd));
+			break;
 		}
 		else
 		{
@@ -210,6 +210,13 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 
 	if(client.inBuffer.empty())
 	{
+		if(client.peerClosed)
+		{
+			if(client.state==ConnectionState::WRITING || !client.outBuffer.empty())
+				return;
+
+			closeClient(loop,fd);
+		}
 		return;
 	}
 
@@ -289,6 +296,13 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 			client.outOffset=0;
 			loop.setReadEnabled(fd,false);
 			loop.setWriteEnabled(fd,true);
+			return;
+		}
+
+		if(client.peerClosed && client.state!=ConnectionState::WRITING && client.outBuffer.empty())
+		{
+			closeClient(loop,fd);
+			return;
 		}
 	}
 	else
@@ -343,7 +357,7 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 		client.outBuffer.clear();
 		client.outOffset=0;
 
-		if(client.closeAfterWrite)
+		if(client.closeAfterWrite || client.peerClosed)
 		{
 			closeClient(loop,fd);
 			return;

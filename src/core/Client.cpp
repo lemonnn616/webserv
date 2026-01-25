@@ -11,5 +11,6 @@ Client::Client()
 	, closeAfterWrite(false)
 	, outOffset(0)
 	, listenPort(0)
+	, peerClosed(false)
 {
 }
