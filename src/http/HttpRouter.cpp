@@ -470,10 +470,71 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 	}
 
 
-	// ----- serve file (GET/HEAD) -----
-	std::string body;
-	if (!FileUtils::readFile(fsPath, body))
+// ----- serve file (GET/HEAD) -----
+
+	// If path exists and is directory -> redirect/index/autoindex
+	if (FileUtils::exists(fsPath) && FileUtils::isDirectory(fsPath))
 	{
+		// Redirect: "/uploads" -> "/uploads/"
+		if (!req.path.empty() && req.path[req.path.size() - 1] != '/')
+		{
+			res.status = 301;
+			res.reason = "Moved Permanently";
+			res.headers["Location"] = req.path + "/";
+			res.body = "";
+			res.headers["Content-Length"] = "0";
+
+			if (req.method == "HEAD")
+				res.body = "";
+
+			applyConnectionPolicy(req, res);
+			return res;
+		}
+
+		// Try index inside directory
+		{
+			std::string indexPath = FileUtils::join(fsPath, indexName);
+			std::string indexBody;
+
+			if (FileUtils::readFile(indexPath, indexBody))
+			{
+				res.status = 200;
+				res.reason = "OK";
+				res.headers["Content-Type"] = getContentTypeByPath(indexPath);
+				res.headers["Content-Length"] = std::to_string(indexBody.size());
+
+				if (req.method == "GET")
+					res.body = indexBody;
+				else
+					res.body = "";
+
+				applyConnectionPolicy(req, res);
+				return res;
+			}
+		}
+
+		// Autoindex if enabled
+		if (loc->autoindex)
+		{
+			std::string html = AutoIndex::generate(req.path, fsPath);
+			if (!html.empty())
+			{
+				res.status = 200;
+				res.reason = "OK";
+				res.headers["Content-Type"] = "text/html";
+				res.headers["Content-Length"] = std::to_string(html.size());
+
+				if (req.method == "GET")
+					res.body = html;
+				else
+					res.body = "";
+
+				applyConnectionPolicy(req, res);
+				return res;
+			}
+		}
+
+		// Directory but no index and autoindex off -> 404
 		HttpError::fill(res, cfg, 404, "Not Found");
 		if (req.method == "HEAD")
 			res.body = "";
@@ -481,16 +542,30 @@ HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 		return res;
 	}
 
-	res.status = 200;
-	res.reason = "OK";
-	res.headers["Content-Type"] = getContentTypeByPath(fsPath);
-	res.headers["Content-Length"] = std::to_string(body.size());
+	// Normal file
+	{
+		std::string body;
 
-	if (req.method == "GET")
-		res.body = body;
-	else
-		res.body = "";
+		if (!FileUtils::readFile(fsPath, body))
+		{
+			HttpError::fill(res, cfg, 404, "Not Found");
+			if (req.method == "HEAD")
+				res.body = "";
+			applyConnectionPolicy(req, res);
+			return res;
+		}
 
-	applyConnectionPolicy(req, res);
-	return res;
-}
+		res.status = 200;
+		res.reason = "OK";
+		res.headers["Content-Type"] = getContentTypeByPath(fsPath);
+		res.headers["Content-Length"] = std::to_string(body.size());
+
+		if (req.method == "GET")
+			res.body = body;
+		else
+			res.body = "";
+
+		applyConnectionPolicy(req, res);
+		return res;
+	}
+
