@@ -52,8 +52,6 @@ namespace FileUtils
 			}
 			if (n == 0)
 				break;
-			if (errno == EINTR)
-				continue;
 			::close(fd);
 			out.clear();
 			return false;
@@ -78,8 +76,6 @@ namespace FileUtils
 				off += static_cast<std::size_t>(n);
 				continue;
 			}
-			if (n < 0 && errno == EINTR)
-				continue;
 
 			::close(fd);
 			return false;

@@ -150,54 +150,29 @@ void CoreServer::handleCgiRead(EventLoop& loop, int fd)
 
 	char buf[4096];
 
-	while (true)
+	ssize_t n = ::read(fd, buf, sizeof(buf));
+	if (n > 0)
 	{
-		ssize_t n = ::read(fd, buf, sizeof(buf));
-		if (n > 0)
+		if (fd == p.stdoutFd)
+			p.stdoutBuffer.append(buf, static_cast<std::size_t>(n));
+		else if (fd == p.stderrFd)
+			p.stderrBuffer.append(buf, static_cast<std::size_t>(n));
+	}
+	else
+	{
+		loop.removeFd(fd);
+		::close(fd);
+		_cgiFdToPid.erase(fd);
+
+		if (fd == p.stdoutFd)
 		{
-			if (fd == p.stdoutFd)
-				p.stdoutBuffer.append(buf, static_cast<std::size_t>(n));
-			else if (fd == p.stderrFd)
-				p.stderrBuffer.append(buf, static_cast<std::size_t>(n));
+			p.stdoutFd = -1;
+			p.stdoutClosed = true;
 		}
-		else if (n == 0)
+		else if (fd == p.stderrFd)
 		{
-			loop.removeFd(fd);
-			::close(fd);
-			_cgiFdToPid.erase(fd);
-
-			if (fd == p.stdoutFd)
-			{
-				p.stdoutFd = -1;
-				p.stdoutClosed = true;
-			}
-			else if (fd == p.stderrFd)
-			{
-				p.stderrFd = -1;
-				p.stderrClosed = true;
-			}
-			break;
-		}
-		else
-		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
-
-			loop.removeFd(fd);
-			::close(fd);
-			_cgiFdToPid.erase(fd);
-
-			if (fd == p.stdoutFd)
-			{
-				p.stdoutFd = -1;
-				p.stdoutClosed = true;
-			}
-			else if (fd == p.stderrFd)
-			{
-				p.stderrFd = -1;
-				p.stderrClosed = true;
-			}
-			break;
+			p.stderrFd = -1;
+			p.stderrClosed = true;
 		}
 	}
 
@@ -220,20 +195,18 @@ void CoreServer::handleCgiWrite(EventLoop& loop, int fd)
 	if (fd != p.stdinFd)
 		return;
 
-	while (p.stdinOffset < p.stdinBuffer.size())
+	if (p.stdinOffset < p.stdinBuffer.size())
 	{
 		const char* data = p.stdinBuffer.data() + p.stdinOffset;
 		std::size_t remain = p.stdinBuffer.size() - p.stdinOffset;
 
 		ssize_t n = ::write(fd, data, remain);
 		if (n > 0)
+		{
 			p.stdinOffset += static_cast<std::size_t>(n);
-		else if (n == 0)
-			break;
+		}
 		else
 		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;
 			loop.setWriteEnabled(fd, false);
 			loop.removeFd(fd);
 			::close(fd);
@@ -244,18 +217,16 @@ void CoreServer::handleCgiWrite(EventLoop& loop, int fd)
 
 			p.stdinBuffer.clear();
 			p.stdinOffset = 0;
-
-			break;
 		}
 	}
 
-	if (p.stdinOffset >= p.stdinBuffer.size())
+	if (p.stdinFd == fd && p.stdinOffset >= p.stdinBuffer.size())
 	{
 		loop.setWriteEnabled(fd, false);
 		loop.removeFd(fd);
 		::close(fd);
 		_cgiFdToPid.erase(fd);
-		
+
 		p.stdinFd = -1;
 		p.stdinClosed = true;
 

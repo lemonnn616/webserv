@@ -131,7 +131,7 @@ int CoreServer::run()
 	std::memset(&sa,0,sizeof(sa));
 	sa.sa_handler=CoreServer::handleStopSignal;
 	sigemptyset(&sa.sa_mask);
-	sa.sa_flags=0;
+	sa.sa_flags=SA_RESTART;
 	::sigaction(SIGINT,&sa,0);
 	::sigaction(SIGTERM,&sa,0);
 

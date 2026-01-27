@@ -269,30 +269,22 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 
 	char buffer[4096];
 
-	while(true)
+	ssize_t n=::recv(fd,buffer,sizeof(buffer),0);
+	if(n>0)
 	{
-		ssize_t n=::recv(fd,buffer,sizeof(buffer),0);
-		if(n>0)
-		{
-			client.lastActivity=std::chrono::steady_clock::now();
-			client.inBuffer.append(buffer,static_cast<std::size_t>(n));
-		}
-		else if(n==0)
-		{
-			client.peerClosed=true;
-			Logger::info("Peer EOF on fd "+std::to_string(fd));
-			break;
-		}
-		else
-		{
-			if(errno==EAGAIN||errno==EWOULDBLOCK)
-			{
-				break;
-			}
-			Logger::error("recv failed on fd "+std::to_string(fd));
-			closeClient(loop,fd);
-			return;
-		}
+		client.lastActivity=std::chrono::steady_clock::now();
+		client.inBuffer.append(buffer,static_cast<std::size_t>(n));
+	}
+	else if(n==0)
+	{
+		client.peerClosed=true;
+		Logger::info("Peer EOF on fd "+std::to_string(fd));
+	}
+	else
+	{
+		Logger::error("recv failed on fd "+std::to_string(fd));
+		closeClient(loop,fd);
+		return;
 	}
 
 	if(client.inBuffer.empty())
@@ -386,10 +378,6 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 				return;
 			}
 
-			// Регистрируем CGI в poll.
-			// ВАЖНО: у тебя сейчас registerCgiProcess(loop, ...) принимает 7 аргументов
-			// (pid, clientFd, stdinFd, stdoutFd, stderrFd, stdinData)
-			// поэтому передаём body как stdinData.
 			registerCgiProcess(loop,pid,fd,stdinFd,stdoutFd,stderrFd,body);
 			std::map<pid_t, CgiProcess>::iterator itp = _cgi.find(pid);
 			if (itp != _cgi.end())
@@ -398,14 +386,10 @@ void CoreServer::handleClientRead(EventLoop& loop,int fd)
 				itp->second.version = version;
 			}
 
-			// Клиент ждёт CGI: не читаем клиента, не пишем клиенту
 			loop.setReadEnabled(fd,false);
 			loop.setWriteEnabled(fd,false);
 
-			// Можно очистить вход, чтобы не держать память
 			std::string().swap(client.inBuffer);
-
-			// sessionId больше не нужен
 			std::string().swap(client.sessionId);
 
 			return;
@@ -453,7 +437,7 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 	}
 	Client& client=it->second;
 
-	while(client.outOffset<client.outBuffer.size())
+	if(client.outOffset<client.outBuffer.size())
 	{
 		const char* data=client.outBuffer.data()+client.outOffset;
 		std::size_t remain=client.outBuffer.size()-client.outOffset;
@@ -464,16 +448,8 @@ void CoreServer::handleClientWrite(EventLoop& loop,int fd)
 			client.lastActivity=std::chrono::steady_clock::now();
 			client.outOffset+=static_cast<std::size_t>(n);
 		}
-		else if(n==0)
-		{
-			break;
-		}
 		else
 		{
-			if(errno==EAGAIN||errno==EWOULDBLOCK)
-			{
-				break;
-			}
 			Logger::error("send failed on fd "+std::to_string(fd));
 			closeClient(loop,fd);
 			return;

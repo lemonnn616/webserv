@@ -9,8 +9,6 @@
 #include <vector>
 #include <cctype>
 
-// ---------------- helpers ----------------
-
 static void closeIfValid(int& fd)
 {
 	if (fd >= 0)
@@ -85,12 +83,6 @@ static bool readAllFd(int fd, std::string& out)
 		if (n == 0)
 			return true;
 
-		if (errno == EINTR)
-			continue;
-
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			continue;
-
 		return false;
 	}
 }
@@ -147,8 +139,6 @@ static void buildCgiEnv(
 		envOut.push_back(it->first + "=" + it->second);
 	}
 }
-
-// ---------------- async spawn (NEW) ----------------
 
 bool CgiRunner::spawn(
 	const std::string& interpreter,
@@ -223,7 +213,6 @@ bool CgiRunner::spawn(
 		::_exit(127);
 	}
 
-	// parent: keep write-end for stdin, read-ends for stdout/stderr
 	closeIfValid(inPipe[0]);
 	closeIfValid(outPipe[1]);
 	closeIfValid(errPipe[1]);
@@ -235,8 +224,6 @@ bool CgiRunner::spawn(
 
 	return true;
 }
-
-// ---------------- old blocking run (kept for now) ----------------
 
 bool CgiRunner::run(
 	const std::string& interpreter,
@@ -323,8 +310,6 @@ bool CgiRunner::run(
 			off += static_cast<std::size_t>(n);
 			continue;
 		}
-		if (n < 0 && errno == EINTR)
-			continue;
 		break;
 	}
 	closeIfValid(inPipe[1]);
