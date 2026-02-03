@@ -232,20 +232,31 @@ static HttpParser::Result parseChunkedBody(
 
 HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, std::size_t maxBodySize)
 {
+	// find end of headers (CRLFCRLF)
 	std::size_t headersEnd = inBuffer.find("\r\n\r\n");
 	if (headersEnd == std::string::npos)
 		return NEED_MORE;
 
-	std::string headersBlock = inBuffer.substr(0, headersEnd);
-	std::string rest = inBuffer.substr(headersEnd + 4);
-
-	std::size_t lineEnd = headersBlock.find("\r\n");
-	if (lineEnd == std::string::npos)
+	// IMPORTANT FIX:
+	// request-line ends with the FIRST CRLF, which may be exactly at headersEnd when there are NO headers.
+	std::size_t lineEnd = inBuffer.find("\r\n");
+	if (lineEnd == std::string::npos || lineEnd > headersEnd)
 		return BAD_REQUEST;
 
-	std::string requestLine = headersBlock.substr(0, lineEnd);
-	std::string headersPart = headersBlock.substr(lineEnd + 2);
+	std::string requestLine = inBuffer.substr(0, lineEnd);
 
+	// headers part is between request-line CRLF and the CRLFCRLF
+	std::size_t headersPartBegin = lineEnd + 2;
+	std::string headersPart;
+	if (headersPartBegin < headersEnd)
+		headersPart = inBuffer.substr(headersPartBegin, headersEnd - headersPartBegin);
+	else
+		headersPart = "";
+
+	// body starts after CRLFCRLF
+	std::string rest = inBuffer.substr(headersEnd + 4);
+
+	// parse request line
 	std::size_t p1 = requestLine.find(' ');
 	if (p1 == std::string::npos)
 		return BAD_REQUEST;
@@ -253,8 +264,8 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	if (p2 == std::string::npos)
 		return BAD_REQUEST;
 
-	req.method = requestLine.substr(0, p1);
-	req.target = requestLine.substr(p1 + 1, p2 - p1 - 1);
+	req.method  = requestLine.substr(0, p1);
+	req.target  = requestLine.substr(p1 + 1, p2 - p1 - 1);
 	req.version = requestLine.substr(p2 + 1);
 
 	req.headers.clear();
@@ -270,15 +281,23 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	else
 		return BAD_REQUEST;
 
+	// parse headers lines (headersPart contains lines separated by CRLF, WITHOUT the final empty line)
 	std::size_t pos = 0;
 	while (pos < headersPart.size())
 	{
 		std::size_t end = headersPart.find("\r\n", pos);
-		if (end == std::string::npos)
-			break;
+		std::string line;
 
-		std::string line = headersPart.substr(pos, end - pos);
-		pos = end + 2;
+		if (end == std::string::npos)
+		{
+			line = headersPart.substr(pos);
+			pos = headersPart.size();
+		}
+		else
+		{
+			line = headersPart.substr(pos, end - pos);
+			pos = end + 2;
+		}
 
 		if (line.empty())
 			break;
@@ -297,12 +316,14 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 			it->second += "," + value;
 	}
 
+	// RFC: Host обязателен только для HTTP/1.1
 	if (isHttp11)
 	{
 		if (req.headers.find("host") == req.headers.end())
 			return BAD_REQUEST;
 	}
 
+	// absolute-form target -> strip scheme+host, keep path
 	std::string target = req.target;
 	if (target.size() >= 7 && target.compare(0, 7, "http://") == 0)
 	{
@@ -315,8 +336,10 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		target = (slash == std::string::npos) ? "/" : target.substr(slash);
 	}
 
+	// split query
 	std::size_t qpos = target.find('?');
 	std::string rawPath;
+	
 	if (qpos == std::string::npos)
 	{
 		rawPath = target;
@@ -327,7 +350,10 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		rawPath = target.substr(0, qpos);
 		req.query = target.substr(qpos + 1);
 	}
+	if (rawPath.size() > 1 && rawPath[rawPath.size() - 1] == '/')
+		req.hadTrailingSlash = true;
 
+	// decode + normalize
 	std::string decoded;
 	if (!percentDecode(rawPath, decoded))
 		return BAD_REQUEST;
@@ -337,7 +363,10 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		return BAD_REQUEST;
 
 	req.path = normalized;
+	if (req.hadTrailingSlash && req.path.size() > 1 && req.path[req.path.size() - 1] != '/')
+		req.path += "/";
 
+	// transfer-encoding
 	bool isChunked = false;
 	std::map<std::string, std::string>::const_iterator te = req.headers.find("transfer-encoding");
 	if (te != req.headers.end())
@@ -363,6 +392,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		return OK;
 	}
 
+	// content-length
 	std::size_t contentLength = 0;
 	std::map<std::string, std::string>::const_iterator cl = req.headers.find("content-length");
 	if (cl != req.headers.end())

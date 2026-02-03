@@ -62,7 +62,7 @@ static std::string getExtWithDot(const std::string& p)
 	std::size_t dot = p.rfind('.');
 	if (dot == std::string::npos)
 		return "";
-	return p.substr(dot);
+	return p.substr(dot); // includes '.'
 }
 
 static std::string getContentTypeByPath(const std::string& p)
@@ -128,6 +128,7 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 	if (!loc)
 		return rel;
 
+	// if location is "/", reqPath is "/x/y" -> rel = "x/y"
 	if (loc->prefix == "/")
 	{
 		if (reqPath.size() > 1)
@@ -135,10 +136,8 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 		return "";
 	}
 
-	std::string prefixFolder = loc->prefix;
-	if (!prefixFolder.empty() && prefixFolder[0] == '/')
-		prefixFolder.erase(0, 1);
-
+	// for location "/directory", reqPath "/directory/abc" -> rel = "abc"
+	// for location "/directory", reqPath "/directory" -> rel = "" (directory root)
 	std::string rest;
 	if (reqPath.size() > loc->prefix.size())
 	{
@@ -151,16 +150,23 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 		rest = "";
 	}
 
-	if (!loc->root.empty())
-		return rest;
-
-	if (rest.empty())
-		return prefixFolder;
-
-	return prefixFolder + "/" + rest;
+	return rest;
 }
 
-// ---------- new router result ----------
+static bool isMethodAllowed(const HttpRequest& req, const LocationConfig& loc)
+{
+	if (req.method == "GET")
+		return loc.allowGet;
+	if (req.method == "HEAD")
+		return loc.allowHead;
+	if (req.method == "POST")
+		return loc.allowPost;
+	if (req.method == "DELETE")
+		return loc.allowDelete;
+	return false;
+}
+
+// ---------- router ----------
 
 HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerConfig& cfg)
 {
@@ -178,28 +184,16 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 	}
 
 	// ----- method allowed? -----
-	bool methodAllowed = false;
-	if (req.method == "GET" && loc->allowGet)
-		methodAllowed = true;
-	else if (req.method == "HEAD" && loc->allowHead)
-		methodAllowed = true;
-	else if (req.method == "POST" && loc->allowPost)
-		methodAllowed = true;
-	else if (req.method == "DELETE" && loc->allowDelete)
-		methodAllowed = true;
-
-	if (!methodAllowed)
+	if (!isMethodAllowed(req, *loc))
 	{
 		rr.response.status = 405;
 		rr.response.reason = "Method Not Allowed";
 		rr.response.body = "Method Not Allowed\n";
 		rr.response.headers["Content-Type"] = "text/plain";
-		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
 		rr.response.headers["Allow"] = buildAllowHeader(*loc);
-
+		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
 		if (req.method == "HEAD")
 			rr.response.body = "";
-
 		applyConnectionPolicy(req, rr.response);
 		return rr;
 	}
@@ -216,7 +210,6 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		rr.response.headers["Location"] = loc->returnUrl;
 		rr.response.body = "";
 		rr.response.headers["Content-Length"] = "0";
-
 		applyConnectionPolicy(req, rr.response);
 		return rr;
 	}
@@ -234,8 +227,9 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 	std::string fsPath = FileUtils::join(baseRoot, relPath);
 
 	// =========================
-	// CGI (DETECT ONLY, NO RUN)
+	// CGI detect (tester): only POST + ext in cfg.cgi
 	// =========================
+	if (req.method == "POST")
 	{
 		std::string ext = getExtWithDot(fsPath);
 		std::map<std::string, std::string>::const_iterator it = cfg.cgi.find(ext);
@@ -254,13 +248,11 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 			rr.isCgi = true;
 			rr.cgiInterpreter = it->second;
 			rr.cgiScriptPath = fsPath;
-
-			// rr.response здесь не трогаем: HttpHandler сделает spawn + сбор stdout
 			return rr;
 		}
 	}
 
-	// ----- POST: upload -----
+	// ----- POST non-CGI: upload -----
 	if (req.method == "POST")
 	{
 		std::string dir = cfg.uploadDir;
@@ -284,7 +276,6 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		rr.response.body = "Uploaded: " + name + "\n";
 		rr.response.headers["Content-Type"] = "text/plain";
 		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
-
 		applyConnectionPolicy(req, rr.response);
 		return rr;
 	}
@@ -341,9 +332,9 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// ----- serve file (GET/HEAD) -----
 	if (FileUtils::exists(fsPath) && FileUtils::isDirectory(fsPath))
 	{
+		// redirect /dir -> /dir/
 		if (!req.path.empty() && req.path[req.path.size() - 1] != '/')
 		{
 			rr.response.status = 301;
@@ -351,10 +342,8 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 			rr.response.headers["Location"] = req.path + "/";
 			rr.response.body = "";
 			rr.response.headers["Content-Length"] = "0";
-
 			if (req.method == "HEAD")
 				rr.response.body = "";
-
 			applyConnectionPolicy(req, rr.response);
 			return rr;
 		}
@@ -369,17 +358,13 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 				rr.response.reason = "OK";
 				rr.response.headers["Content-Type"] = getContentTypeByPath(indexPath);
 				rr.response.headers["Content-Length"] = std::to_string(indexBody.size());
-
-				if (req.method == "GET")
-					rr.response.body = indexBody;
-				else
-					rr.response.body = "";
-
+				rr.response.body = (req.method == "GET") ? indexBody : "";
 				applyConnectionPolicy(req, rr.response);
 				return rr;
 			}
 		}
 
+		// autoindex
 		if (loc->autoindex)
 		{
 			std::string html = AutoIndex::generate(req.path, fsPath);
@@ -389,12 +374,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 				rr.response.reason = "OK";
 				rr.response.headers["Content-Type"] = "text/html";
 				rr.response.headers["Content-Length"] = std::to_string(html.size());
-
-				if (req.method == "GET")
-					rr.response.body = html;
-				else
-					rr.response.body = "";
-
+				rr.response.body = (req.method == "GET") ? html : "";
 				applyConnectionPolicy(req, rr.response);
 				return rr;
 			}
@@ -407,6 +387,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
+	// file
 	{
 		std::string body;
 
@@ -423,24 +404,17 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		rr.response.reason = "OK";
 		rr.response.headers["Content-Type"] = getContentTypeByPath(fsPath);
 		rr.response.headers["Content-Length"] = std::to_string(body.size());
-
-		if (req.method == "GET")
-			rr.response.body = body;
-		else
-			rr.response.body = "";
-
+		rr.response.body = (req.method == "GET") ? body : "";
 		applyConnectionPolicy(req, rr.response);
 		return rr;
 	}
 }
 
-// old API for compatibility (temporary)
+
 HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
 {
 	RouteResult rr = route2(req, cfg);
 
-	// ВАЖНО: если это CGI, старый route() НЕ МОЖЕТ его выполнить без блокировки.
-	// Поэтому возвращаем 500, пока HttpHandler не будет переведён на route2().
 	if (rr.isCgi)
 	{
 		HttpResponse res;
