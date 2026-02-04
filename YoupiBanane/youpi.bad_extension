@@ -1,0 +1,5 @@
+cat > YoupiBanane/youpi.bad_extension <<'EOF'
+<!doctype html><meta charset="utf-8">
+<h1>YoupiBanane index (youpi.bad_extension)</h1>
+<p>If you see this in browser — directory index works.</p>
+EOF
