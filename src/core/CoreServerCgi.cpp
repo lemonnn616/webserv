@@ -96,13 +96,17 @@ void CoreServer::finalizeCgiIfDone(EventLoop& loop, pid_t pid)
 
 	HttpResponse res;
 
-	// БЕЗ тернарника:
 	if (!p.version.empty())
 		res.version = p.version;
 	else
 		res.version = "HTTP/1.1";
 
-	if (p.stdoutBuffer.empty())
+	if (p.timedOut)
+	{
+		HttpError::fill(res, getServerConfig(client.serverConfigIndex), 504, "Gateway Timeout");
+		res.headers["Connection"] = "close";
+	}
+	else if (p.stdoutBuffer.empty())
 	{
 		HttpError::fill(res, getServerConfig(client.serverConfigIndex), 502, "Bad Gateway");
 		res.headers["Connection"] = "close";
@@ -118,7 +122,6 @@ void CoreServer::finalizeCgiIfDone(EventLoop& loop, pid_t pid)
 		{
 			res.headers["Connection"] = "close";
 
-			// HEAD: тело не отправляем
 			if (p.method == "HEAD")
 				res.body.clear();
 		}
@@ -301,8 +304,11 @@ void CoreServer::checkCgiTimeouts(EventLoop& loop)
 		CgiProcess& p = it->second;
 		std::chrono::steady_clock::duration d = now - p.startTime;
 
-		if (d > _cgiTimeout)
+		if (d > _cgiTimeout && !p.timedOut)
+		{
+			p.timedOut = true;
 			toKill.push_back(it->first);
+		}
 	}
 
 	for (std::size_t i = 0; i < toKill.size(); ++i)

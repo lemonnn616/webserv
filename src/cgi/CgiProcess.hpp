@@ -29,6 +29,7 @@ struct CgiProcess
 
 	bool exited;
 	int exitStatus;
+	bool timedOut;
 
 	std::chrono::steady_clock::time_point startTime;
 
@@ -49,6 +50,7 @@ struct CgiProcess
 		, stderrClosed(false)
 		, exited(false)
 		, exitStatus(0)
+		, timedOut(false)
 		, startTime(std::chrono::steady_clock::now())
 	{
 	}
