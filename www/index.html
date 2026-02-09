@@ -1,13 +1,54 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>webserv</title></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Webserv Demo</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
 <body>
-  <h1>Hello webserv</h1>
-  <p>It works!</p>
-  <ul>
-    <li><a href="/directory/">/directory/</a></li>
-    <li><a href="/uploads/">/uploads/ (autoindex)</a></li>
-    <li><a href="/cgi-bin/hello.py">/cgi-bin/hello.py (CGI)</a></li>
-  </ul>
+  <div class="container">
+
+    <nav class="top">
+      <a href="/">Dashboard</a>
+      <a href="/manage.html">Uploads</a>
+      <a href="/cgi.html">CGI</a>
+      <a href="/errors.html">Errors</a>
+      <a href="/uploads/">Autoindex</a>
+    </nav>
+
+    <h1>Webserv HTTP Server</h1>
+    <p>Browser-d demo pages for project defense.</p>
+
+    <div class="card-grid">
+      <a class="card" href="/manage.html">
+        <h2>Upload Manager</h2>
+        <div class="small">POST /upload, GET & DELETE /uploads</div>
+      </a>
+
+      <a class="card" href="/cgi.html">
+        <h2>CGI Demo</h2>
+        <div class="small">Run CGI scripts and show non-blocking behavior</div>
+      </a>
+
+      <a class="card" href="/errors.html">
+        <h2>Error Pages</h2>
+        <div class="small">Trigger 404 / 405 / 413 and more</div>
+      </a>
+
+      <a class="card" href="/uploads/">
+        <h2>Autoindex</h2>
+        <div class="small">Directory listing from your webserv</div>
+      </a>
+    </div>
+
+    <div class="section">
+      <h2>What this proves</h2>
+      <p class="small">
+        These pages call your endpoints directly: <b>/upload</b> (POST), <b>/uploads</b> (GET/DELETE),
+        and CGI scripts via <b>.py</b> mapping.
+      </p>
+    </div>
+
+  </div>
 </body>
 </html>

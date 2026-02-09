@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Upload Manager</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+
+    <nav class="top">
+      <a href="/">Dashboard</a>
+      <a href="/manage.html">Uploads</a>
+      <a href="/cgi.html">CGI</a>
+      <a href="/errors.html">Errors</a>
+      <a href="/uploads/">Autoindex</a>
+    </nav>
+
+    <h1>Upload Manager</h1>
+    <p>Upload files and manage them via your webserv endpoints.</p>
+
+    <div class="section">
+      <h2>Upload file (POST /upload)</h2>
+      <div class="row">
+        <input type="file" id="fileInput">
+        <button onclick="uploadFile()">Upload</button>
+        <button onclick="loadFiles()">Refresh</button>
+      </div>
+      <div class="log" id="uploadLog"></div>
+    </div>
+
+    <div class="section">
+      <h2>Uploaded files (GET /uploads + DELETE /uploads/name)</h2>
+      <div class="file-list" id="fileList"></div>
+      <div class="small">Note: this list is parsed from your autoindex HTML.</div>
+    </div>
+
+  </div>
+
+<script>
+async function uploadFile() {
+  const input = document.getElementById("fileInput");
+  const log = document.getElementById("uploadLog");
+
+  if (!input.files.length) {
+    log.textContent = "No file selected";
+    return;
+  }
+
+  const file = input.files[0];
+  const data = await file.arrayBuffer();
+
+  try {
+    const res = await fetch("/upload", { method: "POST", body: data });
+    log.textContent = await res.text();
+  } catch (e) {
+    log.textContent = "Upload error: " + e;
+  }
+  loadFiles();
+}
+
+function escapeHtml(s) {
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+	async function loadFiles() {
+	const list = document.getElementById("fileList");
+	const log = document.getElementById("uploadLog");
+
+	list.innerHTML = "<div class='small'>Loading...</div>";
+
+	try {
+		const res = await fetch("/uploads/");
+		const html = await res.text();
+
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(html, "text/html");
+		const links = doc.querySelectorAll("a");
+
+		list.innerHTML = "";
+		let count = 0;
+
+		links.forEach(link => {
+		let href = link.getAttribute("href");
+		if (!href || href === "../") return;
+
+		// sanitize: remove query/fragment
+		href = href.split("#")[0].split("?")[0];
+
+		// get only filename
+		let fileName = href;
+
+		if (fileName.startsWith("/uploads/"))
+			fileName = fileName.substring("/uploads/".length);
+
+		if (fileName.includes("/"))
+			fileName = fileName.split("/").pop();
+
+		if (!fileName) return;
+
+		count++;
+
+		const item = document.createElement("div");
+		item.className = "file-item";
+		item.innerHTML =
+			"<span>" + escapeHtml(fileName) + "</span>" +
+			"<button onclick=\"deleteFile('" + encodeURIComponent(fileName) + "')\">DELETE</button>";
+
+		list.appendChild(item);
+		});
+
+		if (count === 0) {
+		list.innerHTML = "<div class='small'>No files found.</div>";
+		}
+	} catch (e) {
+		list.innerHTML = "<div class='log'>List error: " + escapeHtml(String(e)) + "</div>";
+		log.textContent = "List error: " + String(e);
+	}
+	}
+
+
+
+async function deleteFile(fileNameEncoded)
+{
+	const log = document.getElementById("uploadLog");
+
+	try {
+		const res = await fetch("/uploads/" + fileNameEncoded, { method: "DELETE" });
+		const text = await res.text();
+
+		if (!res.ok) {
+		log.textContent = "DELETE failed (" + res.status + "): " + text;
+		return;
+		}
+
+		log.textContent = "Deleted OK (" + res.status + ")";
+	} catch (e) {
+		log.textContent = "DELETE error: " + e;
+	}
+
+	loadFiles();
+}
+</script>
+
+</body>
+</html>

@@ -67,27 +67,24 @@ static std::string getExtWithDot(const std::string& p)
 
 static std::string getContentTypeByPath(const std::string& p)
 {
-    std::size_t dot = p.rfind('.');
-    if (dot == std::string::npos)
-        return "text/plain";
+	std::size_t dot = p.rfind('.');
+	if (dot == std::string::npos)
+		return "text/plain";
 
-    std::string ext = p.substr(dot + 1);
-    ext = toLowerStr(ext);
+	std::string ext = p.substr(dot + 1);
+	ext = toLowerStr(ext);
 
-    if (ext == "html" || ext == "htm") return "text/html";
-    if (ext == "css")  return "text/css";
-    if (ext == "js")   return "application/javascript";
-    if (ext == "png")  return "image/png";
-    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
-    if (ext == "gif")  return "image/gif";
-    if (ext == "txt")  return "text/plain";
+	if (ext == "html" || ext == "htm") return "text/html";
+	if (ext == "css")  return "text/css";
+	if (ext == "js")   return "application/javascript";
+	if (ext == "png")  return "image/png";
+	if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+	if (ext == "gif")  return "image/gif";
+	if (ext == "txt")  return "text/plain";
 
-    // ВАЖНО ДЛЯ ВАШЕГО SUBJECT/TESTER:
-    if (ext == "bad_extension") return "text/html";   // youpi.bad_extension обычно HTML
-    if (ext == "bla")           return "text/plain";  // youpi.bla — текст
-    if (ext == "py")            return "text/plain";  // если вдруг отдаётся как статика
 
-    return "application/octet-stream";
+
+	return "application/octet-stream";
 }
 
 
@@ -223,21 +220,25 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 	}
 
 	// ----- build filesystem path using location -----
-	std::string baseRoot = cfg.root;
-	if (!loc->root.empty())
-		baseRoot = loc->root;
+		std::string baseRoot = cfg.root;
+		if (!loc->root.empty())
+			baseRoot = loc->root;
 
-	std::string indexName = cfg.index;
-	if (!loc->index.empty())
-		indexName = loc->index;
+		
+		if (loc->root.empty() && loc->prefix != "/")
+			baseRoot = FileUtils::join(baseRoot, loc->prefix.substr(1));
 
-	std::string relPath = buildRelPath(loc, req.path);
-	std::string fsPath = FileUtils::join(baseRoot, relPath);
+		std::string indexName = cfg.index;
+		if (!loc->index.empty())
+			indexName = loc->index;
+
+		std::string relPath = buildRelPath(loc, req.path);
+		std::string fsPath = FileUtils::join(baseRoot, relPath);
 
 	// =========================
 	// CGI detect (tester): only POST + ext in cfg.cgi
 	// =========================
-	if (req.method == "POST")
+	if (req.method == "GET" || req.method == "HEAD" || req.method == "POST")
 	{
 		std::string ext = getExtWithDot(fsPath);
 		std::map<std::string, std::string>::const_iterator it = cfg.cgi.find(ext);
