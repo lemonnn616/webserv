@@ -48,7 +48,7 @@ curl -i -X DELETE http://localhost:8080/uploads/new.txt
 ### 400 Bad Request
 
 ```bash
-printf 'GET / HTTP/1.1\r\n\r\n' | nc -N localhost 8080
+printf 'GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' | nc -N localhost 8080
 ```
 
 ### 403 Forbidden
