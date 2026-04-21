@@ -4,24 +4,22 @@
 #include <unistd.h>
 #include <vector>
 #include <signal.h>
-#include <cstring>
 
 volatile sig_atomic_t CoreServer::_stopRequested=0;
-sigset_t CoreServer::_cgiSignalMask;
 
-void CoreServer::maskCgiSignals()
+void CoreServer::maskCgiSignals(sigset_t& previousMask)
 {
 	sigset_t mask;
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGCHLD);
 	sigaddset(&mask, SIGTERM);
 	sigaddset(&mask, SIGINT);
-	::sigprocmask(SIG_BLOCK, &mask, &_cgiSignalMask);
+	::sigprocmask(SIG_BLOCK, &mask, &previousMask);
 }
 
-void CoreServer::unmaskCgiSignals()
+void CoreServer::unmaskCgiSignals(const sigset_t& previousMask)
 {
-	::sigprocmask(SIG_SETMASK, &_cgiSignalMask, NULL);
+	::sigprocmask(SIG_SETMASK, &previousMask, NULL);
 }
 
 void CoreServer::handleStopSignal(int signum)
@@ -37,8 +35,8 @@ bool CoreServer::stopRequested()
 
 void CoreServer::shutdown(EventLoop& loop)
 {
-	maskCgiSignals();
-
+	sigset_t previousMask;
+	maskCgiSignals(previousMask);
 	std::vector<pid_t> pids;
 	pids.reserve(_cgi.size());
 
@@ -86,6 +84,5 @@ void CoreServer::shutdown(EventLoop& loop)
 		::close(_reserveFd);
 		_reserveFd=-1;
 	}
-
-	unmaskCgiSignals();
+	unmaskCgiSignals(previousMask);
 }

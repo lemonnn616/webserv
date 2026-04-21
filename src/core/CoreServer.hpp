@@ -55,6 +55,8 @@ public:
 	void shutdown(EventLoop& loop);
 
 	void registerCgiProcess(EventLoop& loop,pid_t pid,int clientFd,int stdinFd,int stdoutFd,int stderrFd,const std::string& stdinData);
+	static void maskCgiSignals(sigset_t& previousMask);
+	static void unmaskCgiSignals(const sigset_t& previousMask);
 
 private:
 	std::vector<ServerConfig> _serverConfigs;
@@ -92,10 +94,6 @@ private:
 	void computeMaxClients();
 
 	static volatile sig_atomic_t _stopRequested;
-	static sigset_t _cgiSignalMask;
-
-	void maskCgiSignals();
-	void unmaskCgiSignals();
 
 	// CGI finalization (important for non-blocking CGI)
 	void finalizeCgiIfDone(EventLoop& loop, pid_t pid);

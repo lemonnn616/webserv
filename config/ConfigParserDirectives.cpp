@@ -3,6 +3,31 @@
 #include <cstdlib>
 #include <cctype>
 
+static bool parseLimitedSize(const std::string& s, std::size_t& out)
+{
+	if (s.empty())
+		return false;
+
+	std::size_t value = 0;
+	for (std::size_t i = 0; i < s.size(); ++i)
+	{
+		if (s[i] < '0' || s[i] > '9')
+			return false;
+
+		std::size_t digit = static_cast<std::size_t>(s[i] - '0');
+		if (value > (1073741824UL - digit) / 10)
+			return false;
+
+		value = value * 10 + digit;
+	}
+
+	if (value == 0 || value > 1073741824UL)
+		return false;
+
+	out = value;
+	return true;
+}
+
 bool ConfigParser::applyServerDirective(ServerConfig& srv,const std::string& key,const std::vector<std::string>& args)
 {
 	if(key=="listen")
@@ -62,13 +87,11 @@ bool ConfigParser::applyServerDirective(ServerConfig& srv,const std::string& key
 		if(args.size()!=1)
 			return false;
 
-		long n=std::atol(args[0].c_str());
-		// Validate: must be positive and reasonable
-		// Limit to 1 GB (1073741824 bytes) to prevent overflow and resource exhaustion
-		if(n<=0 || n>1073741824L)
+		std::size_t limit = 0;
+		if(!parseLimitedSize(args[0], limit))
 			return false;
 
-		srv.clientMaxBodySize=static_cast<std::size_t>(n);
+		srv.clientMaxBodySize=limit;
 		return true;
 	}
 

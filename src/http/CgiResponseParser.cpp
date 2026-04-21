@@ -15,6 +15,36 @@ static std::string toLowerStr(const std::string& s)
 	return r;
 }
 
+static std::string trimReason(const std::string& s)
+{
+	std::size_t i = 0;
+	while (i < s.size() && (s[i] == ' ' || s[i] == '\t'))
+		++i;
+
+	std::size_t j = s.size();
+	while (j > i && (s[j - 1] == ' ' || s[j - 1] == '\t'))
+		--j;
+
+	return s.substr(i, j - i);
+}
+
+static bool isSafeReasonPhrase(const std::string& s)
+{
+	if (s.empty())
+		return false;
+
+	for (std::size_t i = 0; i < s.size(); ++i)
+	{
+		unsigned char c = static_cast<unsigned char>(s[i]);
+		if (c == '\r' || c == '\n')
+			return false;
+		if (c < 32 || c > 126)
+			return false;
+	}
+
+	return true;
+}
+
 bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 {
 	// Reject excessively large responses (security: prevent DoS)
@@ -98,7 +128,13 @@ bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 
 			std::size_t sp = val.find(' ');
 			if (sp != std::string::npos && sp + 1 < val.size())
-				res.reason = val.substr(sp + 1);
+			{
+				std::string reason = trimReason(val.substr(sp + 1));
+				if (isSafeReasonPhrase(reason))
+					res.reason = reason;
+				else
+					res.reason = "OK";
+			}
 			else
 				res.reason = "OK";
 		}

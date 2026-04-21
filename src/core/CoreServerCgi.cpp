@@ -34,8 +34,8 @@ void CoreServer::registerCgiProcess(
 	const std::string& stdinData
 )
 {
-	maskCgiSignals();
-
+	sigset_t previousMask;
+	maskCgiSignals(previousMask);
 	CgiProcess p;
 	p.pid = pid;
 	p.clientFd = clientFd;
@@ -67,8 +67,7 @@ void CoreServer::registerCgiProcess(
 	}
 
 	_cgi[pid] = p;
-
-	unmaskCgiSignals();
+	unmaskCgiSignals(previousMask);
 }
 
 void CoreServer::finalizeCgiIfDone(EventLoop& loop, pid_t pid)
@@ -246,12 +245,12 @@ void CoreServer::handleCgiWrite(EventLoop& loop, int fd)
 
 void CoreServer::cleanupCgi(EventLoop& loop, pid_t pid)
 {
-	maskCgiSignals();
-
+	sigset_t previousMask;
+	maskCgiSignals(previousMask);
 	std::map<pid_t, CgiProcess>::iterator it = _cgi.find(pid);
 	if (it == _cgi.end())
 	{
-		unmaskCgiSignals();
+		unmaskCgiSignals(previousMask);
 		return;
 	}
 
@@ -280,8 +279,7 @@ void CoreServer::cleanupCgi(EventLoop& loop, pid_t pid)
 	}
 
 	_cgi.erase(it);
-
-	unmaskCgiSignals();
+	unmaskCgiSignals(previousMask);
 }
 
 void CoreServer::reapChildren(EventLoop& loop)
