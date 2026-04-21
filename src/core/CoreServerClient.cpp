@@ -19,7 +19,7 @@
 
 static const std::size_t MAX_HEADER_BYTES = 64 * 1024;
 
-// ---------------- small helpers ----------------
+
 
 static std::string toLowerStr(const std::string& s)
 {
@@ -41,13 +41,13 @@ static std::string trimSpaces(const std::string& s)
 	return s.substr(i, j - i);
 }
 
-// static std::string ltrimSpaces(const std::string& s)
-// {
-// 	std::size_t i = 0;
-// 	while (i < s.size() && (s[i] == ' ' || s[i] == '\t'))
-// 		++i;
-// 	return s.substr(i);
-// }
+
+
+
+
+
+
+
 
 static bool parseSizeTStrict(const std::string& s, std::size_t& out)
 {
@@ -107,15 +107,15 @@ static bool extractContentLength(const std::string& headersBlock, std::size_t& o
 	return false;
 }
 
-// ONLY for pre-check before full parsing: "Host:" presence (case-insensitive)
+
 static bool hasHostHeader(const std::string& headersBlock)
 {
 	std::string low = toLowerStr(headersBlock);
-	// host header is after request line -> search for CRLF + "host:"
+	
 	return (low.find("\r\nhost:") != std::string::npos);
 }
 
-// ---------------- response helpers ----------------
+
 
 static std::string makePlainResponse(
 	const std::string& version,
@@ -142,8 +142,8 @@ static std::string makePlainResponse(
 	res += "Connection: close\r\n";
 	res += "Content-Type: text/plain\r\n";
 
-	// IMPORTANT: Content-Length MUST match body actually sent.
-	// For HEAD: send headers only -> Content-Length should be the length of the body you *would* send on GET.
+	
+	
 	res += "Content-Length: ";
 	res += std::to_string(body.size());
 	res += "\r\n";
@@ -170,14 +170,14 @@ static void failClose(EventLoop& loop, int fd, Client& client,
 	loop.setWriteEnabled(fd, true);
 }
 
-// Backward-compatible overload: when we haven't parsed method/version yet.
+
 static void failClose(EventLoop& loop, int fd, Client& client,
 					  int status, const std::string& reason, const std::string& body)
 {
 	failClose(loop, fd, client, "HTTP/1.1", "GET", status, reason, body);
 }
 
-// ---------------- CGI state parsing ----------------
+
 
 static bool parseCgiStateData(
 	const std::string& s,
@@ -237,7 +237,7 @@ static bool parseCgiStateData(
 	return true;
 }
 
-// ---------------- CoreServer methods ----------------
+
 
 void CoreServer::handleNewConnection(EventLoop& loop, int listenFd)
 {
@@ -365,12 +365,12 @@ void CoreServer::handleClientRead(EventLoop& loop, int fd)
 		}
 		else
 		{
-			// We can safely take the header block now
+			
 			std::string headersBlock = client.inBuffer.substr(0, headersEnd);
 
-			// IMPORTANT:
-			// Don't force Host-based server selection if Host is missing (nc tests often omit it).
-			// Let the real HTTP parser / handler decide (can return 400 later if strict HTTP/1.1).
+			
+			
+			
 			if (hasHostHeader(headersBlock))
 				updateServerIndexFromHost(client);
 

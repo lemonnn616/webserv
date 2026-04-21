@@ -88,8 +88,8 @@ void HttpHandler::onDataReceived(
 			return;
 		}
 
-		// Формат stateData:
-		// CGI|<pid>|<stdinFd>|<stdoutFd>|<stderrFd>|<method>|<version>|<len>\n<body>
+		
+		
 		stateData.clear();
 		stateData+="CGI|";
 		stateData+=std::to_string((long long)sp.pid);

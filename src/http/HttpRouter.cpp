@@ -10,7 +10,7 @@
 #include <cctype>
 #include <cstdlib>
 
-// ---------- helpers ----------
+
 
 static std::string toLowerStr(const std::string& s)
 {
@@ -62,7 +62,7 @@ static std::string getExtWithDot(const std::string& p)
 	std::size_t dot = p.rfind('.');
 	if (dot == std::string::npos)
 		return "";
-	return p.substr(dot); // includes '.'
+	return p.substr(dot); 
 }
 
 static std::string getContentTypeByPath(const std::string& p)
@@ -133,7 +133,7 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 	if (!loc)
 		return rel;
 
-	// if location is "/", reqPath is "/x/y" -> rel = "x/y"
+	
 	if (loc->prefix == "/")
 	{
 		if (reqPath.size() > 1)
@@ -141,8 +141,8 @@ static std::string buildRelPath(const LocationConfig* loc, const std::string& re
 		return "";
 	}
 
-	// for location "/directory", reqPath "/directory/abc" -> rel = "abc"
-	// for location "/directory", reqPath "/directory" -> rel = "" (directory root)
+	
+	
 	std::string rest;
 	if (reqPath.size() > loc->prefix.size())
 	{
@@ -171,7 +171,7 @@ static bool isMethodAllowed(const HttpRequest& req, const LocationConfig& loc)
 	return false;
 }
 
-// ---------- router ----------
+
 
 HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerConfig& cfg)
 {
@@ -188,7 +188,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// ----- method allowed? -----
+	
 	if (!isMethodAllowed(req, *loc))
 	{
 		rr.response.status = 405;
@@ -203,7 +203,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// ----- redirect/return -----
+	
 	if (loc->hasReturn)
 	{
 		int code = loc->returnCode;
@@ -219,7 +219,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// ----- build filesystem path using location -----
+	
 		std::string baseRoot = cfg.root;
 		if (!loc->root.empty())
 			baseRoot = loc->root;
@@ -235,9 +235,9 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		std::string relPath = buildRelPath(loc, req.path);
 		std::string fsPath = FileUtils::join(baseRoot, relPath);
 
-	// =========================
-	// CGI detect (tester): only POST + ext in cfg.cgi
-	// =========================
+	
+	
+	
 	if (req.method == "GET" || req.method == "HEAD" || req.method == "POST")
 	{
 		std::string ext = getExtWithDot(fsPath);
@@ -261,7 +261,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		}
 	}
 
-	// ----- POST non-CGI: upload -----
+	
 	if (req.method == "POST")
 	{
 		std::string dir = cfg.uploadDir;
@@ -289,7 +289,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// ----- DELETE -----
+	
 	if (req.method == "DELETE")
 	{
 		if (FileUtils::isDirectory(fsPath))
@@ -343,7 +343,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 
 	if (FileUtils::exists(fsPath) && FileUtils::isDirectory(fsPath))
 	{
-		// redirect /dir -> /dir/
+		
 		if (!req.path.empty() && req.path[req.path.size() - 1] != '/')
 		{
 			rr.response.status = 301;
@@ -373,7 +373,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 			}
 		}
 
-		// autoindex
+		
 		if (loc->autoindex)
 		{
 			std::string html = AutoIndex::generate(req.path, fsPath);
@@ -396,7 +396,7 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 		return rr;
 	}
 
-	// file
+	
 	{
 		std::string body;
 

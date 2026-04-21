@@ -4,7 +4,7 @@
 
 struct HttpResponse
 {
-	std::string version; // "HTTP/1.1" or "HTTP/1.0"
+	std::string version; 
 	int status;
 	std::string reason;
 	std::map<std::string, std::string> headers;

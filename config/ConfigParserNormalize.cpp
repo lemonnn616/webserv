@@ -18,11 +18,11 @@ static std::string normalizePrefix(const std::string& in)
 {
 	std::string p = in;
 
-	// must start with '/'
+	
 	if (p.empty() || p[0] != '/')
 		return p;
 
-	// remove trailing slashes except root "/"
+	
 	while (p.size() > 1 && p[p.size() - 1] == '/')
 		p.erase(p.size() - 1);
 
@@ -40,7 +40,7 @@ bool ConfigParser::normalizeAll(std::vector<ServerConfig>& out)
 		if (srv.index.empty())
 			srv.index = "index.html";
 
-		// normalize server_name: lowercase + unique
+		
 		{
 			std::set<std::string> seen;
 			std::vector<std::string> names;
@@ -59,7 +59,7 @@ bool ConfigParser::normalizeAll(std::vector<ServerConfig>& out)
 
 		bool hasRootLoc = false;
 
-		// normalize locations
+		
 		for (std::size_t i = 0; i < srv.locations.size(); ++i)
 		{
 			LocationConfig& loc = srv.locations[i];
@@ -78,9 +78,9 @@ bool ConfigParser::normalizeAll(std::vector<ServerConfig>& out)
 				loc.index = srv.index;
 		}
 
-		// SAFER DEFAULT:
-		// If user didn't define "/", we add it, but ONLY GET+HEAD.
-		// POST/DELETE must be explicitly allowed in config via allowed_methods.
+		
+		
+		
 		if (!hasRootLoc)
 		{
 			LocationConfig loc;
@@ -101,7 +101,7 @@ bool ConfigParser::normalizeAll(std::vector<ServerConfig>& out)
 			srv.locations.push_back(loc);
 		}
 
-		// sort by longest prefix first (more specific location wins)
+		
 		std::stable_sort(
 			srv.locations.begin(),
 			srv.locations.end(),

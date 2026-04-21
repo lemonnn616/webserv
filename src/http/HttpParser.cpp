@@ -6,7 +6,7 @@
 #include <map>
 #include <limits>
 
-// ---------------- small helpers ----------------
+
 
 static std::string toLower(const std::string& s)
 {
@@ -40,7 +40,7 @@ static int hexVal(char c)
 	return -1;
 }
 
-// percent-decode (reject %00 and bad %XX)
+
 static bool percentDecode(const std::string& in, std::string& out)
 {
 	out.clear();
@@ -64,24 +64,24 @@ static bool percentDecode(const std::string& in, std::string& out)
 
 		unsigned char b = static_cast<unsigned char>((hi << 4) | lo);
 		if (b == 0)
-			return false; // reject NUL
+			return false; 
 		out.push_back(static_cast<char>(b));
 		i += 2;
 	}
 	return true;
 }
 
-// Maximum allowed path length (security limit)
+
 static const std::size_t MAX_PATH_LENGTH = 4096;
 
-// normalize path: collapse //, handle . and .., keep leading '/'
-// returns false if tries to go above root or path is too long
+
+
 static bool normalizePath(const std::string& decoded, std::string& normalized)
 {
 	if (decoded.empty() || decoded[0] != '/')
 		return false;
 
-	// Reject excessively long paths early
+	
 	if (decoded.size() > MAX_PATH_LENGTH)
 		return false;
 
@@ -124,7 +124,7 @@ static bool normalizePath(const std::string& decoded, std::string& normalized)
 			normalized += "/";
 	}
 
-	// Validate final path length
+	
 	if (normalized.size() > MAX_PATH_LENGTH)
 		return false;
 
@@ -241,24 +241,24 @@ static HttpParser::Result parseChunkedBody(
 	}
 }
 
-// ---------------- main parse ----------------
+
 
 HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, std::size_t maxBodySize)
 {
-	// find end of headers (CRLFCRLF)
+	
 	std::size_t headersEnd = inBuffer.find("\r\n\r\n");
 	if (headersEnd == std::string::npos)
 		return NEED_MORE;
 
-	// IMPORTANT FIX:
-	// request-line ends with the FIRST CRLF, which may be exactly at headersEnd when there are NO headers.
+	
+	
 	std::size_t lineEnd = inBuffer.find("\r\n");
 	if (lineEnd == std::string::npos || lineEnd > headersEnd)
 		return BAD_REQUEST;
 
 	std::string requestLine = inBuffer.substr(0, lineEnd);
 
-	// headers part is between request-line CRLF and the CRLFCRLF
+	
 	std::size_t headersPartBegin = lineEnd + 2;
 	std::string headersPart;
 	if (headersPartBegin < headersEnd)
@@ -266,10 +266,10 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	else
 		headersPart = "";
 
-	// body starts after CRLFCRLF
+	
 	std::string rest = inBuffer.substr(headersEnd + 4);
 
-	// parse request line
+	
 	std::size_t p1 = requestLine.find(' ');
 	if (p1 == std::string::npos)
 		return BAD_REQUEST;
@@ -294,7 +294,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	else
 		return BAD_REQUEST;
 
-	// parse headers lines (headersPart contains lines separated by CRLF, WITHOUT the final empty line)
+	
 	std::size_t pos = 0;
 	while (pos < headersPart.size())
 	{
@@ -329,14 +329,14 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 			it->second += "," + value;
 	}
 
-	// RFC: Host обязателен только для HTTP/1.1
+	
 	if (isHttp11)
 	{
 		if (req.headers.find("host") == req.headers.end())
 			return BAD_REQUEST;
 	}
 
-	// absolute-form target -> strip scheme+host, keep path
+	
 	std::string target = req.target;
 	if (target.size() >= 7 && target.compare(0, 7, "http://") == 0)
 	{
@@ -349,7 +349,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		target = (slash == std::string::npos) ? "/" : target.substr(slash);
 	}
 
-	// split query
+	
 	std::size_t qpos = target.find('?');
 	std::string rawPath;
 	
@@ -366,7 +366,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	if (rawPath.size() > 1 && rawPath[rawPath.size() - 1] == '/')
 		req.hadTrailingSlash = true;
 
-	// decode + normalize
+	
 	std::string decoded;
 	if (!percentDecode(rawPath, decoded))
 		return BAD_REQUEST;
@@ -379,7 +379,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 	if (req.hadTrailingSlash && req.path.size() > 1 && req.path[req.path.size() - 1] != '/')
 		req.path += "/";
 
-	// transfer-encoding
+	
 	bool isChunked = false;
 	std::map<std::string, std::string>::const_iterator te = req.headers.find("transfer-encoding");
 	if (te != req.headers.end())
@@ -405,7 +405,7 @@ HttpParser::Result HttpParser::parse(std::string& inBuffer, HttpRequest& req, st
 		return OK;
 	}
 
-	// content-length
+	
 	std::size_t contentLength = 0;
 	std::map<std::string, std::string>::const_iterator cl = req.headers.find("content-length");
 	if (cl != req.headers.end())

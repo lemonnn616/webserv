@@ -84,10 +84,10 @@ function escapeHtml(s) {
 		let href = link.getAttribute("href");
 		if (!href || href === "../") return;
 
-		// sanitize: remove query/fragment
+		
 		href = href.split("#")[0].split("?")[0];
 
-		// get only filename
+		
 		let fileName = href;
 
 		if (fileName.startsWith("/uploads/"))

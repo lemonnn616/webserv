@@ -29,7 +29,7 @@ std::string HttpResponse::serialize() const
 	std::string result;
 	const std::string reasonSafe = safeReasonPhrase(reason);
 
-	// status line
+	
 	if (version.empty())
 		result += "HTTP/1.1";
 	else
@@ -41,7 +41,7 @@ std::string HttpResponse::serialize() const
 	result += reasonSafe;
 	result += "\r\n";
 
-	// headers
+	
 	for (std::map<std::string, std::string>::const_iterator it = headers.begin();
 		 it != headers.end(); ++it)
 	{
@@ -51,7 +51,7 @@ std::string HttpResponse::serialize() const
 		result += "\r\n";
 	}
 
-	// end headers + body
+	
 	result += "\r\n";
 	result += body;
 

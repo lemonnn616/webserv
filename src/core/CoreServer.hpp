@@ -95,6 +95,6 @@ private:
 
 	static volatile sig_atomic_t _stopRequested;
 
-	// CGI finalization (important for non-blocking CGI)
+	
 	void finalizeCgiIfDone(EventLoop& loop, pid_t pid);
 };
