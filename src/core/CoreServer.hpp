@@ -92,7 +92,11 @@ private:
 	void computeMaxClients();
 
 	static volatile sig_atomic_t _stopRequested;
+	static sigset_t _cgiSignalMask;
 
-	// CGI финализация (важно для неблокирующего CGI)
+	void maskCgiSignals();
+	void unmaskCgiSignals();
+
+	// CGI finalization (important for non-blocking CGI)
 	void finalizeCgiIfDone(EventLoop& loop, pid_t pid);
 };

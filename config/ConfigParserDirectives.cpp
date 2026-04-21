@@ -63,7 +63,9 @@ bool ConfigParser::applyServerDirective(ServerConfig& srv,const std::string& key
 			return false;
 
 		long n=std::atol(args[0].c_str());
-		if(n<=0)
+		// Validate: must be positive and reasonable
+		// Limit to 1 GB (1073741824 bytes) to prevent overflow and resource exhaustion
+		if(n<=0 || n>1073741824L)
 			return false;
 
 		srv.clientMaxBodySize=static_cast<std::size_t>(n);

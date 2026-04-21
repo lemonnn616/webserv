@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <limits>
 
 // ---------------- small helpers ----------------
 
@@ -70,11 +71,18 @@ static bool percentDecode(const std::string& in, std::string& out)
 	return true;
 }
 
+// Maximum allowed path length (security limit)
+static const std::size_t MAX_PATH_LENGTH = 4096;
+
 // normalize path: collapse //, handle . and .., keep leading '/'
-// returns false if tries to go above root
+// returns false if tries to go above root or path is too long
 static bool normalizePath(const std::string& decoded, std::string& normalized)
 {
 	if (decoded.empty() || decoded[0] != '/')
+		return false;
+
+	// Reject excessively long paths early
+	if (decoded.size() > MAX_PATH_LENGTH)
 		return false;
 
 	std::vector<std::string> parts;
@@ -115,6 +123,11 @@ static bool normalizePath(const std::string& decoded, std::string& normalized)
 		if (k + 1 < parts.size())
 			normalized += "/";
 	}
+
+	// Validate final path length
+	if (normalized.size() > MAX_PATH_LENGTH)
+		return false;
+
 	return true;
 }
 
