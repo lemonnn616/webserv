@@ -299,7 +299,7 @@ bool ConfigParser::setAllowed(LocationConfig& loc, const std::vector<std::string
 		else if (m == "POST")   loc.allowPost = true;
 		else if (m == "DELETE") loc.allowDelete = true;
 		else
-			return false; // неизвестный метод => ошибка конфига
+			return false; 
 	}
 	return true;
 }
@@ -309,11 +309,11 @@ static std::string normalizePrefix(const std::string& in)
 {
 	std::string p = in;
 
-	// must start with '/'
+	
 	if (p.empty() || p[0] != '/')
 		return p;
 
-	// remove trailing slashes except root "/"
+	
 	while (p.size() > 1 && p[p.size() - 1] == '/')
 		p.erase(p.size() - 1);
 
@@ -326,7 +326,7 @@ LocationConfig* ConfigParser::getOrCreateLocation(ServerConfig& srv, const std::
 
 	for (std::size_t i = 0; i < srv.locations.size(); ++i)
 	{
-		// also compare normalized stored prefix (just in case)
+		
 		if (normalizePrefix(srv.locations[i].prefix) == norm)
 		{
 			srv.locations[i].prefix = norm;

@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <limits>
 
-// Maximum response header size from CGI (prevents unbounded memory allocation)
+
 static const std::size_t MAX_CGI_RESPONSE_HEADERS = 65536;
 
 static std::string toLowerStr(const std::string& s)
@@ -47,8 +47,8 @@ static bool isSafeReasonPhrase(const std::string& s)
 
 bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 {
-	// Reject excessively large responses (security: prevent DoS)
-	if (out.size() > 10485760) // 10 MB max response size
+	
+	if (out.size() > 10485760) 
 		return false;
 
 	std::size_t sep = out.find("\r\n\r\n");
@@ -59,7 +59,7 @@ bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 			return false;
 	}
 
-	// Validate header section size
+	
 	if (sep > MAX_CGI_RESPONSE_HEADERS)
 		return false;
 
@@ -80,7 +80,7 @@ bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 
 	std::size_t pos = 0;
 	std::size_t headerCount = 0;
-	const std::size_t MAX_HEADERS_COUNT = 256; // Limit header count
+	const std::size_t MAX_HEADERS_COUNT = 256; 
 
 	while (pos < head.size())
 	{
@@ -104,7 +104,7 @@ bool CgiResponseParser::parse(const std::string& out, HttpResponse& res)
 		if (line.empty())
 			continue;
 
-		// Validate individual header line length (max 8KB per header)
+		
 		if (line.size() > 8192)
 			return false;
 

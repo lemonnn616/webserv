@@ -178,7 +178,7 @@ bool CoreServer::initListenSockets()
 		if(fd<0)
 		{
 			Logger::error("Failed to create listen socket on port "+std::to_string(cfg.port));
-			// Clean up all previously created sockets before returning
+			
 			for(std::size_t j=0;j<_listenFds.size();++j)
 			{
 				::close(_listenFds[j]);
@@ -188,7 +188,7 @@ bool CoreServer::initListenSockets()
 			_listenFdToPort.clear();
 			return false;
 		}
-		// Only add to list after successful creation - prevents partial state
+		
 		_listenFds.push_back(fd);
 		_listenFdToServerIndex[fd]=cfg.serverIndex;
 		_listenFdToPort[fd]=cfg.port;
