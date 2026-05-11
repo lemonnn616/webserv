@@ -16,6 +16,8 @@ struct LocationConfig
 	bool allowPost;
 	bool allowDelete;
 
+	bool upload;
+
 	bool hasReturn;
 	int returnCode;
 	std::string returnUrl;
@@ -29,6 +31,7 @@ struct LocationConfig
 		, allowHead(true)
 		, allowPost(false)
 		, allowDelete(false)
+        , upload(false)
 		, hasReturn(false)
 		, returnCode(0)
 		, returnUrl("")

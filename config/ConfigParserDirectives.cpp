@@ -203,6 +203,18 @@ bool ConfigParser::applyLocationDirective(ServerConfig& srv,LocationConfig& loc,
 		return true;
 	}
 
+	if (key=="upload")
+	{
+		if (args.size()!=1)
+			return false;
+
+		if (args[0]!="on" && args[0]!="off")
+			return false;
+
+		loc.upload = (args[0]=="on");
+		return true;
+	}
+
 	if(key=="allowed_methods")
 	{
 		if(args.empty())
