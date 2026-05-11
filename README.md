@@ -56,8 +56,8 @@ Examples:
 ```bash
 curl -i http://localhost:8080/
 curl -i http://localhost:8080/cgi-bin/hello.py
-curl -I http://localhost:8080/uploads/
-curl -i -X POST http://localhost:8080/upload --data-binary @file.txt
+curl -i -X POST http://localhost:8080/uploads --data-binary @file.txt
+curl -i http://localhost:8080/uploads/
 ```
 
 See [config/default.conf](config/default.conf) for the exact configuration syntax used by the parser.
@@ -68,7 +68,7 @@ See [config/default.conf](config/default.conf) for the exact configuration synta
 - HTTP response generation with status codes, headers, custom error pages, and serialization.
 - Static file serving.
 - Directory handling with redirects, index files, and autoindex generation.
-- File upload support.
+- File upload support (configurable per-location via `upload on`).
 - DELETE support for removing files.
 - CGI execution for configured extensions.
 - Multiple server blocks and location-based routing.
@@ -82,6 +82,8 @@ See [config/default.conf](config/default.conf) for the exact configuration synta
 - `config` - configuration lexer, parser, normalization, and config data structures.
 - `src/utils` - filesystem and string helpers.
 - `www` - sample website content, error pages, and CGI scripts.
+
+To enable saving POST bodies as uploaded files for a specific location, use the `upload on` directive inside that `location` block.
 
 ## Resources
 
