@@ -264,25 +264,37 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 	
 	if (req.method == "POST")
 	{
-		std::string dir = cfg.uploadDir;
-		if (dir.empty())
-			dir = "www/uploads";
-
-		std::string name = makeUploadFileName();
-		std::string full = FileUtils::join(dir, name);
-
-		if (!FileUtils::writeFile(full, req.body))
+		if (loc->upload)
 		{
-			HttpError::fill(rr.response, cfg, 500, "Internal Server Error");
-			if (req.method == "HEAD")
-				rr.response.body = "";
+			std::string dir = cfg.uploadDir;
+			if (dir.empty())
+				dir = "www/uploads";
+
+			std::string name = makeUploadFileName();
+			std::string full = FileUtils::join(dir, name);
+
+			if (!FileUtils::writeFile(full, req.body))
+			{
+				HttpError::fill(rr.response, cfg, 500, "Internal Server Error");
+				if (req.method == "HEAD")
+					rr.response.body = "";
+				applyConnectionPolicy(req, rr.response);
+				return rr;
+			}
+
+			rr.response.status = 201;
+			rr.response.reason = "Created";
+			rr.response.body = "Uploaded: " + name + "\n";
+			rr.response.headers["Content-Type"] = "text/plain";
+			rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
 			applyConnectionPolicy(req, rr.response);
 			return rr;
 		}
 
-		rr.response.status = 201;
-		rr.response.reason = "Created";
-		rr.response.body = "Uploaded: " + name + "\n";
+		/* Default behavior for POST when upload is not enabled: echo the body back */
+		rr.response.status = 200;
+		rr.response.reason = "OK";
+		rr.response.body = req.body;
 		rr.response.headers["Content-Type"] = "text/plain";
 		rr.response.headers["Content-Length"] = std::to_string(rr.response.body.size());
 		applyConnectionPolicy(req, rr.response);
