@@ -327,9 +327,7 @@ void CoreServer::handleClientRead(EventLoop& loop, int fd)
 	}
 	else
 	{
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return;
-		Logger::error("recv failed on fd " + std::to_string(fd));
+		Logger::error("recv failed on fd " + std::to_string(fd) + " errno=" + std::to_string(errno));
 		closeClient(loop, fd);
 		return;
 	}
@@ -502,9 +500,7 @@ void CoreServer::handleClientWrite(EventLoop& loop, int fd)
 		}
 		else
 		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
-			Logger::error("send failed on fd " + std::to_string(fd));
+			Logger::error("send failed on fd " + std::to_string(fd) + " errno=" + std::to_string(errno));
 			closeClient(loop, fd);
 			return;
 		}
