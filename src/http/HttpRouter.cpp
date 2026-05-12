@@ -291,7 +291,6 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 			return rr;
 		}
 
-		/* Default behavior for POST when upload is not enabled: echo the body back */
 		rr.response.status = 200;
 		rr.response.reason = "OK";
 		rr.response.body = req.body;
