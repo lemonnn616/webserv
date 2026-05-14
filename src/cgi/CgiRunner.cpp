@@ -8,6 +8,8 @@
 #include <cstring>
 #include <vector>
 #include <cctype>
+#include <limits.h>
+#include <cstdlib>
 
 static void closeIfValid(int& fd)
 {
@@ -198,16 +200,52 @@ bool CgiRunner::spawn(
 		::close(outPipe[1]);
 		::close(errPipe[0]);
 		::close(errPipe[1]);
+		
+		std::string absScriptPath;
+		{
+			char* rp = ::realpath(scriptPath.c_str(), NULL);
+			if (rp)
+			{
+				absScriptPath = rp;
+				free(rp);
+			}
+			else
+			{
+				if (!scriptPath.empty() && scriptPath[0] == '/')
+					absScriptPath = scriptPath;
+				else
+				{
+					char cwd[PATH_MAX];
+					if (::getcwd(cwd, sizeof(cwd)))
+						absScriptPath = std::string(cwd) + "/" + scriptPath;
+					else
+						absScriptPath = scriptPath; // fallback
+				}
+			}
+		}
 
 		std::vector<std::string> env;
-		buildCgiEnv(scriptPath, req, envExtra, env);
+		buildCgiEnv(absScriptPath, req, envExtra, env);
 
 		std::vector<char*> envp = buildEnvp(env);
 
 		char* argv[3];
 		argv[0] = const_cast<char*>(interpreter.c_str());
-		argv[1] = const_cast<char*>(scriptPath.c_str());
+		argv[1] = const_cast<char*>(absScriptPath.c_str());
 		argv[2] = 0;
+		{
+			std::string dir = absScriptPath;
+			size_t pos = dir.rfind('/');
+			if (pos != std::string::npos)
+				dir = dir.substr(0, pos);
+			else
+				dir = ".";
+			if (::chdir(dir.c_str()) != 0)
+			{
+				::dprintf(STDERR_FILENO, "chdir failed: %s\n", ::strerror(errno));
+				::_exit(127);
+			}
+		}
 
 		::execve(argv[0], argv, envp.data());
 		::_exit(127);
@@ -283,15 +321,52 @@ bool CgiRunner::run(
 		::close(errPipe[0]);
 		::close(errPipe[1]);
 
+		std::string absScriptPath;
+		{
+			char* rp = ::realpath(scriptPath.c_str(), NULL);
+			if (rp)
+			{
+				absScriptPath = rp;
+				free(rp);
+			}
+			else
+			{
+				if (!scriptPath.empty() && scriptPath[0] == '/')
+					absScriptPath = scriptPath;
+				else
+				{
+					char cwd[PATH_MAX];
+					if (::getcwd(cwd, sizeof(cwd)))
+						absScriptPath = std::string(cwd) + "/" + scriptPath;
+					else
+						absScriptPath = scriptPath; // fallback
+				}
+			}
+		}
+
 		std::vector<std::string> env;
-		buildCgiEnv(scriptPath, req, envExtra, env);
+		buildCgiEnv(absScriptPath, req, envExtra, env);
 
 		std::vector<char*> envp = buildEnvp(env);
 
 		char* argv[3];
 		argv[0] = const_cast<char*>(interpreter.c_str());
-		argv[1] = const_cast<char*>(scriptPath.c_str());
+		argv[1] = const_cast<char*>(absScriptPath.c_str());
 		argv[2] = 0;
+
+		{
+			std::string dir = absScriptPath;
+			size_t pos = dir.rfind('/');
+			if (pos != std::string::npos)
+				dir = dir.substr(0, pos);
+			else
+				dir = ".";
+			if (::chdir(dir.c_str()) != 0)
+			{
+				::dprintf(STDERR_FILENO, "chdir failed: %s\n", ::strerror(errno));
+				::_exit(127);
+			}
+		}
 
 		::execve(argv[0], argv, envp.data());
 		::_exit(127);
