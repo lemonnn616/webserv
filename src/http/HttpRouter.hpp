@@ -18,6 +18,5 @@ public:
 		RouteResult() : isCgi(false), cgiInterpreter(), cgiScriptPath(), response() {}
 	};
 
-	static HttpResponse route(const HttpRequest& req, const ServerConfig& cfg);
 	static RouteResult route2(const HttpRequest& req, const ServerConfig& cfg);
 };

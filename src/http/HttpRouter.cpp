@@ -430,21 +430,3 @@ HttpRouter::RouteResult HttpRouter::route2(const HttpRequest& req, const ServerC
 	}
 }
 
-
-HttpResponse HttpRouter::route(const HttpRequest& req, const ServerConfig& cfg)
-{
-	RouteResult rr = route2(req, cfg);
-
-	if (rr.isCgi)
-	{
-		HttpResponse res;
-		res.version = req.version;
-		HttpError::fill(res, cfg, 500, "Internal Server Error");
-		if (req.method == "HEAD")
-			res.body = "";
-		applyConnectionPolicy(req, res);
-		return res;
-	}
-
-	return rr.response;
-}
