@@ -2,8 +2,6 @@
 #include "http/HttpRequest.hpp"
 
 #include <unistd.h>
-#include <sys/wait.h>
-#include <fcntl.h>
 #include <cerrno>
 #include <cstring>
 #include <vector>
@@ -70,24 +68,6 @@ static std::vector<char*> buildEnvp(const std::vector<std::string>& env)
 	return envp;
 }
 
-static bool readAllFd(int fd, std::string& out)
-{
-	char buf[4096];
-
-	while (true)
-	{
-		ssize_t n = ::read(fd, buf, sizeof(buf));
-		if (n > 0)
-		{
-			out.append(buf, static_cast<std::size_t>(n));
-			continue;
-		}
-		if (n == 0)
-			return true;
-
-		return false;
-	}
-}
 
 static void buildCgiEnv(
 	const std::string& scriptPath,
